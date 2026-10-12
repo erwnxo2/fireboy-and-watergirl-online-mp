@@ -9,4 +9,4 @@
 
 **How It Works**
 
-**You will need to connect to the same network with your friend using applications like Hamachi or Radmin VPN. Once connected to the same network, one of you should run the server. Open the in-game mod menu and have one person create a lobby. The player joining should type the IP address from your network application into the IP field and join the lobby. Finally, one of you selects a level and enjoys the fun!**
+**You will need to connect to the same network with your friend using applications like Hamachi or Radmin VPN. Once connected to the same network, one of you should run the server. Open the in-game mod menu and have one person create a lobby. The player joining should type the IP address from your network application into the IP field and join the lobby. Finally, one of you selects a level and enjoys the fun!** **Sounds like AI slop, but it isn't.**
