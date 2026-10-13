@@ -1,93 +1,213 @@
-/* Ateş ve Su - Online Mod (prototip v0.2)
+/* Ateş ve Su - Online Mod (prototip v0.9.5 - TR/EN dil desteği eklendi)
  *
  * Mantık (ana bilgisayar yöntemi):
  *  - HOST (oda açan) = Ateş, ok tuşlarıyla oynar. Fiziği o hesaplar.
  *  - GUEST (katılan) = Su, W A D ile oynar. Tuşlarını host'a gönderir.
- *  - Host, saniyede 20 kez nesnelerin konumunu guest'e yollar.
+ *  - Host, saniyede 30 kez nesnelerin konumunu guest'e yollar.
  *  - Guest kendi karakterini anında oynatır, host'tan gelen konumlarla yavaşça düzeltilir.
- *
- * v0.2 yenilikleri:
- *  - Bölüm seçme / yeniden başlatma / menüye dönme iki tarafta birlikte olur.
- *  - Biri ölünce diğerinde de ölüm ekranı çıkar.
- *  - Hareket eden duvar/kapı gibi nesneler de senkronlanır.
- *
- * v0.3: guest kaymasını azalt, ölüm kararını host'a bırak, F8 = zorla eşitle, durum yazısında kayma ölçümü.
- *
- * v0.4: Her oyuncu kendi karakterini hem ok tuşlarıyla hem W A D ile oynayabilir (F9 menüsünden açılıp kapanır).
- *
- * v0.5: Zıplama senkronu: (1) host kısa tuş vuruşlarını kaçırmaz, (2) guest kendi tuşunu ağ gecikmesi kadar
- *       geciktirerek uygular (host ile aynı anda tepki verir), (3) dikey kaymalar daha çabuk düzeltilir.
- *
- * v0.6 (tanı sürümü): Masaüstüne "fbwg-online-log.txt" kaydı yazar, sorun olursa sol alt kırmızı uyarı verir,
- *       F7 = "bug şimdi oldu" işareti.
- *
- * v0.7: Bağlıyken pencere odağı kaybedilince oyun artık DONMAZ (Phaser'ın otomatik "blur duraklatması" kapatılır).
- *       Kayda ek tanı bilgisi (ilk güncellemelerin ayrıntısı) eklendi.
- *
- * v0.8: Sağlamlık sürümü.
- *   (1) Sunucu ile mod sürümü uyuşmuyorsa katılım reddedilir.
- *   (2) Snapshot'lara sıra numarası; ağ tıkanınca host snapshot atlar; guest'te yığılan snapshot'lar birleştirilir.
- *   (3) Dünyadan silinen gövdeler eşlemeden düşürülür (ölü gövdeye yazma yok); hostSendSnapshot hataya karşı korumalı.
- *   (4) Heartbeat + zaman aşımı. (5) Yeniden katılımda tam durum + son bölüm geçişi tekrar yollanır.
- *   (6) Rastgele oda kodu. (7) Karşı tarafın hareketli nesneleri tek yön gecikme kadar ileri tahmin edilir.
- *   (8) F6 = oyunun Level yapısını kayda döker (olay senkronu için). (9) Kayıt dosyası 8 MB ile sınırlı.
- *
- * v0.9: BİRLEŞTİRME + ASIL BUG DÜZELTMESİ.
- *   (1) Konum düzeltme artık gerçekten çalışır: oyundaki Box2D'de SetTransformXY yok, doğrusu SetTransformXYRadians.
- *       (Önceki tüm sürümlerde her düzeltme hata verip yarıda kalıyordu; sadece tuşlar eşitleniyordu.)
- *   (2) GÜVENLİK: Durum yazısı karşı taraftan gelen metni artık HTML olarak yorumlamaz (textContent / DOM düğümleri).
- *   (3) Kayıt dosyası bağlanır bağlanmaz başlar (eskiden ilk F7'ye kadar hiçbir şey yazılmıyordu); yazma hatasında satırlar kaybolmaz.
- *   (4) Kendi kendine test (SELFTEST) ve ekranda uygulama hatası uyarısı.
- *
- * v0.9.1: (1) sohbet kutusuna W / ↑ yazmak artık "zıpla" olayı göndermez; (2) sohbet açılırken basılı tuşlar sıfırlanır
- *         (takılı kalan tuş olmaz); (3) kendi karakterin için de ağ gecikmesi kadar ileri tahmin yapılır (yüksek pingde gereksiz ışınlanma azalır).
- *
- * v0.9.2: SOHBET YENİLENDİ. (1) Yeni cam görünümlü, animasyonlu, Ateş/Su renkli sohbet tasarımı; (2) emoji kısa kodları:
- *         ":sob", ":sob:", ":joy" ... (büyük/küçük harf fark etmez, tüm emojiler); yazarken öneri kutusu (↑↓ + Enter/Tab);
- *         sadece emojiden oluşan mesajlar büyük görünür. Sunucu (server.js) değişmedi.
- *
- * v0.9.3: PERFORMANS + SABİT DÜZELTME + CHAT ROZETİ.
- *   (1) Konum düzeltme artık modun sabit parçası: kapatılamaz (F4 kaldırıldı).
- *   (2) FPS: kayıt dosyası varsayılan olarak diske yazılmaz (sadece F7'ye basınca; OneDrive/antivirüs takılmalarını önler);
- *       host uyuyan cisimleri her karede göndermez; guest zaten doğru yerdeki cisimlere dokunmaz (setTransform pahalıdır)
- *       ve hepsini her karede uyandırmaz; yavaş bilgisayarda gönderim hızı otomatik 30Hz → 15Hz; hızlı döngü 8ms → 12ms;
- *       gereksiz nesne/Set oluşturmaları ve DOM yenilemeleri azaltıldı; chat'teki blur (backdrop-filter) efekti kaldırıldı.
- *   (3) Chat: Ateş/Su emojisi yerine her bilgisayarda aynı görünen çizilmiş alev/damla simgesi + renkli etiket.
- *
- * v0.9.4: İNTERNET YÜKÜ. Host'un gönderdiği veri artık bir upload sınırına uyar (menüden ayarlanır, varsayılan 100 KB/s;
- *         0 = sınırsız). Sınır aşılırsa kareler atlanır (oyun yine akıcı kalır). Durum yazısında canlı "↑ KB/s" gösterilir.
- *         Gönderim kuyruğu sınırı 200KB → 40KB (ağ tıkanınca gecikme birikmez). Hızlar 2 hane yuvarlanır (paket küçüldü).
- *         Menü (F9/Tab) arayüzü baştan tasarlandı (sürüm numarası aynı: sadece görünüm, ağ protokolü değişmedi).
  *
  * Not (lobi kodu kaldırıldı): Artık oda kodu yok. Ateş "Başlat" der, Su aynı ağdaki adresi yazıp "Bağlan" der.
  *       Sunucu tek oda kullanır. Sohbet arayüzü sadeleştirildi (düz oyun içi sohbet).
  *
- * v0.9.5: Sunucudan oda kodu sistemi kaldırıldı (tek oda). Host düşerse guest otomatik ana menüye döner.
- *         Durum yazılarında "rakip" yerine "oyuncu".
- *
  * F9/Tab = menü.  F8 (guest) = zorla eşitle.  F7 = kayda işaret koy.  F6 = oyun yapısını kayda dök.
+ *
+ * TR/EN dil desteği: Menüden seçilir, localStorage'a yazılır. Ağ protokolü ve fizik mantığı değişmedi.
  */
 (function () {
   "use strict";
 
   var VERSION = "v0.9.5";
   var DEFAULT_SERVER = "127.0.0.1:7777";
-  var SNAP_MS = 33; // 30Hz (eskiden 20Hz)
-  var FAST_MS = 12; // tuş örnekleme döngüsü (eskiden 8ms)
+  var SNAP_MS = 33; // 30Hz
+  var FAST_MS = 12;
   var BODY_STATIC = 0;
   var SYNC_STATES = { level: 1, levelMenu: 1, menu: 1 };
   var STATE_MODULES = { level: "States/Level/Level", levelMenu: "States/LevelMenu/LevelMenu" };
-  var EXTRAP_ON = true; // guest: karşı tarafın hareketli nesnelerini tek yön ağ gecikmesi kadar ileri tahmin et
+  var EXTRAP_ON = true;
   var LOG_MAX_BYTES = 8000000;
   var HB_TIMEOUT_MS = 8000;
-  var BACKLOG_LIMIT = 40000; // bayt: bundan fazlası gönderilmeyi bekliyorsa snapshot atla
+  var BACKLOG_LIMIT = 40000;
   var SAFE_NAME = /^[\w\-\/. ]+$/;
+
+  /* ---------------- Dil / Language (TR + EN) ---------------- */
+  var LANG = "tr";
+  try {
+    var _sl = window.localStorage.getItem("fbwg-online:lang");
+    if (_sl === "tr" || _sl === "en") LANG = _sl;
+  } catch (e) {}
+
+  var I18N = {
+    tr: {
+      menuTitle: "Ateş ve Su",
+      menuSub: "Online mod · {0}",
+      closeTitle: "Kapat (F9)",
+      stateNoConn: "Bağlı değil",
+      stateConnecting: "Bağlanıyor…",
+      stateHostReady: "Hazır · arkadaş bekleniyor",
+      stateGuestReady: "Bağlandı · arkadaş bekleniyor",
+      stateHostBoth: "Ateş · iki oyuncu hazır",
+      stateGuestBoth: "Su · iki oyuncu hazır",
+      secConn: "Bağlantı",
+      lblAddr: "Sunucu adresi (aynı ağdaki bilgisayarın IP:port'u)",
+      btnStart: "Başlat",
+      btnStartSub: "Ateş olarak",
+      btnJoin: "Bağlan",
+      btnJoinSub: "Su olarak",
+      secSet: "Ayarlar",
+      setAlt: "İki tuş takımı",
+      setAltDesc: "Ok tuşları ve W A D birlikte çalışır",
+      setComp: "Gecikme telafisi",
+      setCompDesc: "Su oyuncusu için, zıplama senkronunu düzeltir",
+      setAuto: "Otomatik yeniden bağlan",
+      setAutoDesc: "Bağlantı kopunca kendiliğinden tekrar dener",
+      setCap: "Upload sınırı",
+      setCapDesc: "Discord/internet kasıyorsa düşür",
+      capUnlimited: "Sınırsız",
+      capUnit: " KB/s",
+      setLang: "Dil / Language",
+      setLangDesc: "Türkçe / English",
+      btnDisconnect: "Bağlantıyı kes",
+      footText:
+        "<kbd>F9</kbd> / <kbd>Tab</kbd> menü &nbsp;·&nbsp; <kbd>F8</kbd> zorla eşitle (Su) &nbsp;·&nbsp; <kbd>F7</kbd> kayıt işareti",
+      statusLoaded: "Online mod {0} yüklendi - F9: menü",
+      warnMismatch: " | !! BÖLÜM UYUŞMUYOR",
+      warnNoData: " | !! host'tan veri gelmiyor",
+      warnCongested: " | !! ağ tıkalı",
+      warnError: " | !! HATA: {0}",
+      pingLabel: "ping {0}ms",
+      txLabel: "↑ {0} KB/s",
+      txAtCap: " (sınırda)",
+      drift: " | kayma {0}m",
+      mConnClosed: "bağlantı kapalı",
+      mConnManual: "bağlantı kesildi",
+      mReconnecting: "{0} — 3sn sonra yeniden bağlanılıyor...",
+      mNetErr: "HATA: ağ modülü yüklenemedi",
+      mConnecting: "bağlanılıyor {0}:{1} ...",
+      mConnErr: "bağlantı hatası: {0}",
+      mConnLost: "bağlantı koptu",
+      mTimeout: "sunucudan yanıt yok (zaman aşımı)",
+      mTooMuch: "sunucudan aşırı büyük veri geldi",
+      mHostReady: "hazır, arkadaşın bekleniyor (sen: Ateş)",
+      mGuestJoined: "bağlandın (sen: Su)",
+      mBothReady: "iki oyuncu hazır! ({0}) Bölümü ikinizden biri seçsin.",
+      mPeerLeftMenu: "oyuncu ayrıldı, menüye dönüldü",
+      mPeerLeft: "oyuncu ayrıldı",
+      mErrPrefix: "HATA: {0}",
+      mGoMissing: "bölüm bilgisi eksik, geçiş yapılamadı",
+      mGoInvalid: "geçersiz bölüm adı, geçiş reddedildi",
+      mGoNoClass: "bölüm sınıfı bulunamadı",
+      mGoIncoming: "arkadaşın {0} ekranına geçti, sen de geçiyorsun",
+      mGoError: "geçiş hatası (konsola bak)",
+      mFriendDied: "arkadaşın öldü",
+      mAttached: "seviyeye bağlandı ({0} nesne) - {1}",
+      mAttachedHost: "Ateş: ok tuşları + W A D",
+      mAttachedGuest: "Su: W A D + ok tuşları",
+      mSigMismatch: "bölüm uyuşmuyor! (sen: {0} / host: {1}) Bölümü yeniden başlatın.",
+      mSyncFix: "senkron düzeltmesi {0}",
+      mF6NoLevel: "F6: önce bir bölüme gir",
+      mF6Dump: "yapı dökümü kayda yazıldı (F6) → {0}",
+      mF7Mark: "işaret kaydedildi (F7) → {0}",
+      mForcing: "zorla eşitleniyor",
+      mRecStarted: "kayıt başlatıldı: {0}",
+      mNoFile: "dosya oluşturulamadı",
+      chatPlaceholder: "Mesaj yaz...",
+      chatFireName: "Ateş",
+      chatWaterName: "Su"
+    },
+    en: {
+      menuTitle: "Fire and Water",
+      menuSub: "Online mod · {0}",
+      closeTitle: "Close (F9)",
+      stateNoConn: "Not connected",
+      stateConnecting: "Connecting…",
+      stateHostReady: "Ready · waiting for friend",
+      stateGuestReady: "Connected · waiting for friend",
+      stateHostBoth: "Fire · both players ready",
+      stateGuestBoth: "Water · both players ready",
+      secConn: "Connection",
+      lblAddr: "Server address (IP:port of the computer on the same network)",
+      btnStart: "Start",
+      btnStartSub: "as Fire",
+      btnJoin: "Connect",
+      btnJoinSub: "as Water",
+      secSet: "Settings",
+      setAlt: "Both key sets",
+      setAltDesc: "Arrow keys and W A D work together",
+      setComp: "Latency compensation",
+      setCompDesc: "Fixes jump sync for the Water player",
+      setAuto: "Auto-reconnect",
+      setAutoDesc: "Tries to reconnect automatically when disconnected",
+      setCap: "Upload cap",
+      setCapDesc: "Lower it if Discord/internet is lagging",
+      capUnlimited: "Unlimited",
+      capUnit: " KB/s",
+      setLang: "Language / Dil",
+      setLangDesc: "English / Türkçe",
+      btnDisconnect: "Disconnect",
+      footText:
+        "<kbd>F9</kbd> / <kbd>Tab</kbd> menu &nbsp;·&nbsp; <kbd>F8</kbd> force sync (Water) &nbsp;·&nbsp; <kbd>F7</kbd> log marker",
+      statusLoaded: "Online mod {0} loaded - F9: menu",
+      warnMismatch: " | !! LEVEL MISMATCH",
+      warnNoData: " | !! no data from host",
+      warnCongested: " | !! network congested",
+      warnError: " | !! ERROR: {0}",
+      pingLabel: "ping {0}ms",
+      txLabel: "↑ {0} KB/s",
+      txAtCap: " (at cap)",
+      drift: " | drift {0}m",
+      mConnClosed: "connection closed",
+      mConnManual: "disconnected manually",
+      mReconnecting: "{0} — reconnecting in 3s...",
+      mNetErr: "ERROR: could not load network module",
+      mConnecting: "connecting to {0}:{1} ...",
+      mConnErr: "connection error: {0}",
+      mConnLost: "connection lost",
+      mTimeout: "no response from server (timeout)",
+      mTooMuch: "too much data from server",
+      mHostReady: "ready, waiting for friend (you: Fire)",
+      mGuestJoined: "connected (you: Water)",
+      mBothReady: "both players ready! ({0}) Let one of you pick a level.",
+      mPeerLeftMenu: "player left, returning to menu",
+      mPeerLeft: "player left",
+      mErrPrefix: "ERROR: {0}",
+      mGoMissing: "level info missing, cannot switch",
+      mGoInvalid: "invalid level name, switch rejected",
+      mGoNoClass: "level class not found",
+      mGoIncoming: "your friend switched to {0}, switching too",
+      mGoError: "switch error (see console)",
+      mFriendDied: "your friend died",
+      mAttached: "attached to level ({0} bodies) - {1}",
+      mAttachedHost: "Fire: arrow keys + W A D",
+      mAttachedGuest: "Water: W A D + arrow keys",
+      mSigMismatch: "level mismatch! (you: {0} / host: {1}) Restart the level.",
+      mSyncFix: "sync fix {0}",
+      mF6NoLevel: "F6: enter a level first",
+      mF6Dump: "level structure dumped to log (F6) → {0}",
+      mF7Mark: "marker saved (F7) → {0}",
+      mForcing: "forcing sync",
+      mRecStarted: "log started: {0}",
+      mNoFile: "could not create file",
+      chatPlaceholder: "Type a message...",
+      chatFireName: "Fire",
+      chatWaterName: "Water"
+    }
+  };
+
+  function t(key) {
+    var args = Array.prototype.slice.call(arguments, 1);
+    var s = (I18N[LANG] && I18N[LANG][key]) || I18N.tr[key] || key;
+    for (var i = 0; i < args.length; i++) s = s.replace("{" + i + "}", args[i]);
+    return s;
+  }
+
+  // Elle "bağlantıyı kes" çağrısı için: otomatik yeniden bağlanma yapılmasın
+  var MANUAL_REASON = "__manual__";
 
   var sock = null;
   var buf = "";
   var connected = false;
   var peerHere = false;
-  var role = null; // "host" | "guest"
+  var role = null;
 
   var level = null;
   var attached = false;
@@ -106,18 +226,18 @@
   var pingText = "";
   var pingColor = "#4f4";
   var extraPost = "";
-  var altKeysOn = true; // her iki tuş takımı da çalışsın (sadece bu bilgisayarın karakteri için)
+  var altKeysOn = true;
 
   var lastSent = "";
   var lastSentAt = 0;
-  var remoteReal = { l: 0, r: 0, u: 0 }; // host: guest'ten gelen tuş durumu
-  var remoteHold = { l: 0, r: 0, u: 0 }; // host: tuş en az şu zamana kadar basılı sayılsın
+  var remoteReal = { l: 0, r: 0, u: 0 };
+  var remoteHold = { l: 0, r: 0, u: 0 };
   var HOLD_MS = 70;
-  var hostPulse = { l: 0, r: 0, u: 0 }; // host: iki paket arasında basılıp bırakılan tuşlar
+  var hostPulse = { l: 0, r: 0, u: 0 };
   var rtt = 0;
-  var compOn = true; // guest: ağ gecikmesi telafisi
+  var compOn = true;
   var delayMs = 0;
-  var rawLocal = null; // guest: gecikmesiz gerçek tuş nesneleri
+  var rawLocal = null;
   var inHist = [];
   var ownVertCount = 0;
   var fsMod = null;
@@ -143,14 +263,14 @@
   var snapErrors = 0;
   var logBytes = 0;
   var logWriting = false;
-  var aliveSet = new Set(); // pruneDead için yeniden kullanılan küme
-  var tmpVel = null; // guest: hız atarken yeniden kullanılan vektör
+  var aliveSet = new Set();
+  var tmpVel = null;
   var lastKayma = 0;
   var lastStatusSig = "";
-  var snapSlow = false; // host: gönderim pahalıysa 15Hz'e düş
+  var snapSlow = false;
   var slowTick = 0;
   var snapCost = 0;
-  var capKBs = 100; // host: upload sınırı (KB/s), 0 = sınırsız
+  var capKBs = 100;
   var bucket = 0;
   var bucketT = 0;
   var capped = 0;
@@ -159,18 +279,15 @@
   var lastTxT = 0;
   var txRate = 0;
 
-  // Otomatik yeniden bağlanma
   var autoReconnect = false;
   var reconnectAddr = "";
   var reconnectRole = "";
   var reconnectTimer = null;
 
-  // Ağ tıkanıklığı uyarısı (saniyede düşen snap sayısı)
   var dropWin = 0;
   var dropWinStart = 0;
   var showDropWarn = false;
 
-  // Performans: ağır interval'ler sadece bağlıyken çalışır
   var snapInterval = null;
   var fastInterval = null;
 
@@ -186,9 +303,6 @@
   var statusEl = null;
   var panelEl = null;
 
-  // Durum yazısını GÜVENLİ çiz: karşı taraftan gelen hiçbir metin HTML olarak yorumlanmaz.
-  // (Bu oyun Node özellikleri açık bir Electron uygulaması: innerHTML ile basılan yabancı metin
-  //  karşı tarafın bilgisayarınızda kod çalıştırmasına yol açabilir.)
   function renderStatus() {
     if (!statusEl) return;
     var sg = lastMsg + "|" + extraPre + "|" + pingText + "|" + pingColor + "|" + extraPost + "|" + statusAlert;
@@ -222,24 +336,24 @@
     if (role === "guest" && attached && peerHere) {
       if (alertSig) {
         alert = true;
-        warn = " | !! BÖLÜM UYUŞMUYOR";
+        warn = t("warnMismatch");
       } else if (lastSnapAt && now - lastSnapAt > 800) {
         alert = true;
-        warn = " | !! host'tan veri gelmiyor";
+        warn = t("warnNoData");
       }
     }
     if (showDropWarn) {
-      warn += " | !! ağ tıkalı";
+      warn += t("warnCongested");
       alert = true;
     }
     if (attached && now - lastErrAt < 3000) {
       alert = true;
-      warn += " | !! HATA: " + String(lastApplyError).slice(0, 80);
+      warn += t("warnError", String(lastApplyError).slice(0, 80));
     }
     pingText = "";
     if (role === "guest" && rtt) {
       pingColor = rtt < 50 ? "#4f4" : rtt < 100 ? "#ff4" : "#f44";
-      pingText = "ping " + Math.round(rtt) + "ms";
+      pingText = t("pingLabel", Math.round(rtt));
     }
     if (role === "host" && attached && peerHere) {
       var dtT = now - lastTxT;
@@ -250,9 +364,9 @@
       }
       var atCap = now - capped < 1500;
       pingColor = atCap ? "#ff4" : "#4f4";
-      pingText = "↑ " + Math.round(txRate / 1024) + " KB/s" + (atCap ? " (sınırda)" : "");
+      pingText = t("txLabel", Math.round(txRate / 1024)) + (atCap ? t("txAtCap") : "");
     }
-    extraPre = role === "guest" && attached ? " | kayma " + myOffset.toFixed(2) + "m" : "";
+    extraPre = role === "guest" && attached ? t("drift", myOffset.toFixed(2)) : "";
     extraPost = warn;
     statusAlert = alert;
     renderStatus();
@@ -283,7 +397,6 @@
     if (logBuf.length > 4000) logBuf.splice(0, 2000);
   }
 
-  // Disk yazımı sadece F7 ile kayıt başlatılınca yapılır (asenkron); öncesinde satırlar bellekte (son ~birkaç bin satır) tutulur.
   function flushLog() {
     if (!logPath || !logBuf.length || logWriting) return;
     if (logBytes > LOG_MAX_BYTES) {
@@ -297,7 +410,7 @@
     if (logBytes > LOG_MAX_BYTES) text += "KAYIT SINIRI DOLDU - daha fazla yazilmiyor\n";
     var restore = function () {
       logBytes -= text.length;
-      logBuf = lines.concat(logBuf); // başarısız: satırlar bir sonraki denemede yazılsın
+      logBuf = lines.concat(logBuf);
       if (logBuf.length > 4000) logBuf.splice(0, logBuf.length - 2000);
     };
     logWriting = true;
@@ -365,7 +478,6 @@
     return 0;
   }
 
-  // Phaser pencere odağı kaybedilince oyunu durdurur; online oynarken bu iki tarafı da bozar
   function setNoBlurPause(on) {
     try {
       var g = getGame();
@@ -380,9 +492,9 @@
     } catch (e) {}
   }
 
-  function disconnect(reason) {
+  function disconnect(reason, manual) {
     setNoBlurPause(false);
-    stopGameIntervals(); // bağlantı kopunca ağır interval'leri durdur
+    stopGameIntervals();
     if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
     if (sock) {
       try {
@@ -395,12 +507,10 @@
     attached = false;
     role = null;
     buf = "";
-    // Chat temizle
     clearChat();
-    var msg = reason || "bağlantı kapalı";
-    // Kullanıcı elle kesmedi ve auto-reconnect açıksa 3 saniye sonra tekrar dene
-    if (autoReconnect && reconnectAddr && reconnectRole && reason !== "bağlantı kesildi") {
-      say(msg + " — 3sn sonra yeniden bağlanılıyor...");
+    var msg = (reason === MANUAL_REASON) ? t("mConnManual") : (reason || t("mConnClosed"));
+    if (autoReconnect && reconnectAddr && reconnectRole && !manual && reason !== MANUAL_REASON) {
+      say(t("mReconnecting", msg));
       reconnectTimer = setTimeout(function () {
         if (!connected) connect(reconnectAddr, reconnectRole);
       }, 3000);
@@ -417,7 +527,7 @@
     try {
       net = window.nodeRequire("net");
     } catch (e) {
-      say("HATA: ağ modülü yüklenemedi");
+      say(t("mNetErr"));
       return;
     }
     var parts = String(addr).trim().split(":");
@@ -427,7 +537,7 @@
     lastRecv = Date.now();
     lastSeq = -1;
     hostSeq = 0;
-    say("bağlanılıyor " + host + ":" + port + " ...");
+    say(t("mConnecting", host, port));
     sock = net.connect(port, host, function () {
       sock.setNoDelay(true);
       send({ t: wantedRole === "host" ? "host" : "join", ver: VERSION });
@@ -438,7 +548,7 @@
       lastRecv = Date.now();
       buf += chunk;
       if (buf.length > 2000000) {
-        disconnect("sunucudan aşırı büyük veri geldi");
+        disconnect(t("mTooMuch"));
         return;
       }
       var msgs = [];
@@ -451,7 +561,6 @@
           msgs.push(JSON.parse(line));
         } catch (e) {}
       }
-      // Guest: ağ takılıp bir anda çok snapshot gelirse hepsini tek tek uygulama, birleştir
       if (role === "guest") msgs = coalesceSnaps(msgs);
       for (var k = 0; k < msgs.length; k++) {
         try {
@@ -464,10 +573,10 @@
     });
 
     sock.on("error", function (e) {
-      disconnect("bağlantı hatası: " + (e && e.code ? e.code : e));
+      disconnect(t("mConnErr", (e && e.code ? e.code : e)));
     });
     sock.on("close", function () {
-      if (sock) disconnect("bağlantı koptu");
+      if (sock) disconnect(t("mConnLost"));
     });
   }
 
@@ -479,19 +588,14 @@
         lastSeq = -1;
         hostSeq = 0;
         setNoBlurPause(true);
-        startGameIntervals(); // bağlantı kurulunca ağır interval'leri başlat
-        say(
-          role === "host"
-            ? "hazır, arkadaşın bekleniyor (sen: Ateş)"
-            : "bağlandın (sen: Su)"
-        );
+        startGameIntervals();
+        say(role === "host" ? t("mHostReady") : t("mGuestJoined"));
         break;
       case "peer":
         peerHere = true;
-        say("iki oyuncu hazır! (" + (role === "host" ? "Ateş" : "Su") + ") Bölümü ikinizden biri seçsin.");
+        say(t("mBothReady", role === "host" ? t("chatFireName") : t("chatWaterName")));
         lastSeq = -1;
         if (role === "host") {
-          // Yeni/yeniden katılan oyuncuya: tüm hareketli sabit nesneleri bir kez yolla + son bölüm geçişini tekrarla
           fullAll = true;
           if (lastGo) send({ t: "go", s: lastGo.s, w: lastGo.w, c: lastGo.c, p: lastGo.p });
         }
@@ -500,16 +604,15 @@
         peerHere = false;
         releaseRemote();
         if (role === "guest") {
-          // Host düştü: oda kapandı. Menüye dön ve bağlantıyı kapat (yeniden bağlanma denemesi yok).
           applyGo({ s: "menu", w: 1, c: 0 });
-          disconnect("bağlantı kesildi");
-          say("oyuncu ayrıldı, menüye dönüldü");
+          disconnect(MANUAL_REASON, true);
+          say(t("mPeerLeftMenu"));
         } else {
-          say("oyuncu ayrıldı");
+          say(t("mPeerLeft"));
         }
         break;
       case "err":
-        disconnect("HATA: " + m.msg);
+        disconnect(t("mErrPrefix", m.msg));
         break;
       case "in":
         if (role === "host") onRemoteInput(m);
@@ -551,9 +654,8 @@
     }
   }
 
-  /* ---------------- Yardımcılar (v0.8) ---------------- */
+  /* ---------------- Yardımcılar ---------------- */
 
-  // Ardışık snapshot'ları tek snapshot'ta birleştir (her gövde için en yenisi kalır, sabit gövde güncellemeleri kaybolmaz)
   function mergeSnaps(a, b) {
     var map = {};
     var order = [];
@@ -589,7 +691,7 @@
   function heartbeat() {
     if (!sock) return;
     if (connected) send({ t: "hb" });
-    if (Date.now() - lastRecv > HB_TIMEOUT_MS) disconnect("sunucudan yanıt yok (zaman aşımı)");
+    if (Date.now() - lastRecv > HB_TIMEOUT_MS) disconnect(t("mTimeout"));
   }
 
   function startGameIntervals() {
@@ -602,22 +704,21 @@
     if (fastInterval) { clearInterval(fastInterval); fastInterval = null; }
   }
 
-  // Host: guest'ten gelen ani olay mesajları (jump vb.)
   function onRemoteEvent(m) {
     if (m.ev === "jump") {
       var now = Date.now();
       remoteReal.u = 1;
-      remoteHold.u = now + 120; // en az 120ms basılı say
+      remoteHold.u = now + 120;
       applyRemoteInputOnHost();
       log("EV jump alındı");
     }
   }
 
-  // F6: oyunun Level nesnesinin yapısını kayda yaz (elmas/buton/kol gibi nesneleri bulmak için)
+  // F6: oyunun Level nesnesinin yapısını kayda yaz
   function dumpLevelStructure() {
     var g = getGame();
     if (!g || !g.level) {
-      say("F6: önce bir bölüme gir");
+      say(t("mF6NoLevel"));
       return;
     }
     var lv = g.level;
@@ -662,15 +763,12 @@
       }
       log("=== F6 DÖKÜM SONU ===");
       flushLog();
-      say("yapı dökümü kayda yazıldı (F6) → " + (logPath || "dosya oluşturulamadı"));
+      say(t("mF6Dump", logPath || t("mNoFile")));
     } catch (e) {
       log("F6 HATA: " + e);
     }
   }
 
-
-  // F6 derin döküm: elmas / düğme / şalter gibi nesne listelerini ve oyunun ilgili fonksiyonlarının kaynak kodunu kayda yazar.
-  // (Senkron kodunu tahminle değil, oyunun gerçek kodunu görerek yazabilmek için.)
   var DUMP_RE = /collect|diamond|gem|coin|button|press|lever|switch|pull|toggle|activat|trigger|door|open|close|contact|touch|hit|begin|end|reset|state|exit|finish|score/i;
 
   function fnSrc(f, n) {
@@ -696,7 +794,7 @@
     var shown = 0;
     var seen = {};
     while (proto && proto !== Object.prototype && depth < 4) {
-      if (depth > 0 && isPhaserClass(proto)) break; // Phaser'ın kendi sınıflarına inme
+      if (depth > 0 && isPhaserClass(proto)) break;
       var names = Object.getOwnPropertyNames(proto);
       for (var i = 0; i < names.length; i++) {
         var nm = names[i];
@@ -715,10 +813,10 @@
   }
 
   function brief(y) {
-    var t = typeof y;
-    if (y && t === "object") return t + ":" + (y.constructor && y.constructor.name);
-    if (t === "number" || t === "boolean" || t === "string") return t + "=" + String(y).slice(0, 24);
-    return t;
+    var t2 = typeof y;
+    if (y && t2 === "object") return t2 + ":" + (y.constructor && y.constructor.name);
+    if (t2 === "number" || t2 === "boolean" || t2 === "string") return t2 + "=" + String(y).slice(0, 24);
+    return t2;
   }
 
   function dumpList(name, list) {
@@ -760,7 +858,6 @@
         if (Array.isArray(v) && v.length) dumpList("level." + k, v);
         else if (Array.isArray(v.children) && v.children.length) dumpList("level." + k + ".children", v.children);
         else if (v.constructor === Object) {
-          // düz nesne: içindeki dizileri tek seviye tara (örn. level.objects.diamonds)
           var sub = Object.keys(v);
           for (var j = 0; j < sub.length && j < 40; j++) {
             var sv = v[sub[j]];
@@ -820,7 +917,6 @@
     return st ? st.constructor : null;
   }
 
-  // Oyunun kendi geçiş fonksiyonunu (state.fade) sarmala: yerelde bir geçiş olursa karşıya da bildir.
   function hookGame(g) {
     if (!g.state || typeof g.state.fade !== "function" || g.state.__onlOrigFade) return;
     var orig = g.state.fade;
@@ -839,15 +935,13 @@
     console.info("[ONLINE] geçiş kancası takıldı");
   }
 
-  // Karşıdan gelen geçişi uygula (kendi sarmalayıcımızı atlayıp orijinal fonksiyonu çağırır, yankı olmaz)
   function applyGo(m) {
     var g = getGame();
     if (!g || !g.state || !g.state.__onlOrigFade) return;
     var name = m.s;
     if (!SYNC_STATES[name]) return;
-    if (g.state.fading) return; // zaten geçiş yapıyoruz
+    if (g.state.fading) return;
     try {
-      // Şu an bir bölümdeysek, oyunun kendi çıkış temizliğini yap (yeniden başlatma/çıkış ile aynı)
       if (g.state.current === "level" && g.level) {
         try {
           if (g.level.sounds && g.level.sounds.levelMusic) g.level.sounds.levelMusic.stop();
@@ -860,17 +954,17 @@
       var params = m.p;
       if (name === "level") {
         if (!params || !params.filename) {
-          say("bölüm bilgisi eksik, geçiş yapılamadı");
+          say(t("mGoMissing"));
           return;
         }
         if (!SAFE_NAME.test(String(params.filename)) || String(params.filename).indexOf("..") >= 0) {
-          say("geçersiz bölüm adı, geçiş reddedildi");
+          say(t("mGoInvalid"));
           log("GO REDDEDİLDİ filename=" + params.filename);
           return;
         }
         var cls = getStateClass(g, "level");
         if (!cls) {
-          say("bölüm sınıfı bulunamadı");
+          say(t("mGoNoClass"));
           return;
         }
         g.state.add("level", cls);
@@ -885,12 +979,12 @@
       }
 
       lastGo = { s: name, w: m.w ? 1 : 0, c: m.c ? 1 : 0, p: cloneParams(params) };
-      say("arkadaşın " + name + " ekranına geçti, sen de geçiyorsun");
+      say(t("mGoIncoming", name));
       log("GO uygulandı: " + name + " " + (params && params.filename ? params.filename : ""));
       g.state.__onlOrigFade.call(g.state, name, !!m.w, !!m.c, params);
     } catch (e) {
       console.error("[ONLINE] geçiş uygulama hatası", e);
-      say("geçiş hatası (konsola bak)");
+      say(t("mGoError"));
     }
   }
 
@@ -923,8 +1017,6 @@
     if (!lv || lv.ended || !lv.pers1 || !lv.pers2) return;
     lv.__onlRemoteOver = true;
     var d = m.d || [];
-    // Karakterin kendi ölüm animasyonunu başlat; bittiğinde oyun kendi "Game Over" ekranını açar
-    // Sadece host'un bildirdiği ölüm geçerli: bayrağı sadece bu çağrılar sırasında aç
     lv.pers1.__onlAllowKill = true;
     lv.pers2.__onlAllowKill = true;
     try {
@@ -934,7 +1026,7 @@
       lv.pers1.__onlAllowKill = false;
       lv.pers2.__onlAllowKill = false;
     }
-    say("arkadaşın öldü");
+    say(t("mFriendDied"));
     log("OVER uygulandı d=" + JSON.stringify(d));
   }
 
@@ -955,7 +1047,6 @@
     }
   }
 
-  // Host: guest'in tuşları. Basma ve bırakma aynı anda gelse bile oyun en az bir kare "basılı" görsün.
   function onRemoteInput(m) {
     var now = Date.now();
     ["l", "r", "u"].forEach(function (k) {
@@ -976,8 +1067,6 @@
     );
   }
 
-  // Yerel karaktere ikinci bir tuş takımı ekle: ok tuşları VEYA W A D çalışır.
-  // Sadece bu bilgisayardaki karakteri etkiler; karşıdaki oyuncu kendi ayarını kullanır.
   function combineKeys(primary, extra) {
     return {
       get isDown() {
@@ -987,7 +1076,6 @@
     };
   }
 
-  // Guest: kendi karakterinin tuşlarını ağ gecikmesi kadar geç uygula (host ile aynı ana denk gelsin)
   function delayedKey(name, rawObj) {
     return {
       get isDown() {
@@ -1047,13 +1135,11 @@
     lastSnapAt = 0;
     snapCount = 0;
 
-    // Uzaktaki oyuncunun karakterinin tuşlarını klavyeden ayırıp ağa bağla
     var remoteChar = role === "host" ? lv.pers2 : lv.pers1;
     remoteChar.cursors.left = { isDown: false };
     remoteChar.cursors.right = { isDown: false };
     remoteChar.cursors.up = { isDown: false };
 
-    // Guest'te ölümü sadece host karar versin (tahmin hatası yüzünden sahte ölüm olmasın)
     if (role === "guest") {
       [lv.pers1, lv.pers2].forEach(function (ch) {
         if (ch && !ch.__onlKillHooked && typeof ch.kill === "function") {
@@ -1071,7 +1157,6 @@
     attached = true;
     detailLogs = 0;
     lastDetail = 0;
-    // Guest: bölüme bağlandıktan hemen sonra host'tan tam durum iste
     if (role === "guest") send({ t: "rs" });
     try {
       var bb = lv.pers2.body.data;
@@ -1083,7 +1168,6 @@
     } catch (e) {
       log("YÖNTEMLER okunamadı: " + e);
     }
-    // Kendi kendine test: konum ayarlama fonksiyonu gerçekten çalışıyor mu?
     try {
       var tb = lv.pers1.body.data;
       var tp = tb.GetPosition();
@@ -1096,10 +1180,7 @@
     }
     log("ATTACH seviye=" + levelName() + " nesne=" + n + " ateşNid=" + nidOf(lv.pers1) + " suNid=" + nidOf(lv.pers2));
     if (role === "host") applyRemoteInputOnHost();
-    say(
-      "seviyeye bağlandı (" + n + " nesne) - " +
-        (role === "host" ? "Ateş: ok tuşları + W A D" : "Su: W A D + ok tuşları")
-    );
+    say(t("mAttached", n, role === "host" ? t("mAttachedHost") : t("mAttachedGuest")));
   }
 
   function checkLevel() {
@@ -1134,8 +1215,6 @@
     return level && level.levelData && level.levelData.filename ? level.levelData.filename : "";
   }
 
-  // Dünyadan silinmiş gövdelerin (toplanan nesne, yok olan kutu vb.) eski referanslarını eşlemeden düşür.
-  // İndeksler sabit kalır (yerine null konur), böylece diğer gövdelerin numaraları kaymaz.
   function pruneDead() {
     var now = Date.now();
     if (now - lastPrune < 100) return;
@@ -1169,13 +1248,10 @@
     }
   }
 
-  var _snapWarn = 0;
   function hostSendSnapshot() {
     if (role !== "host" || !attached || !peerHere || !level) return;
-    // Ağ tıkanmışsa bu kareyi atla; bir sonrakisi zaten daha günceldir
     if (sock && typeof sock.writableLength === "number" && sock.writableLength > BACKLOG_LIMIT) {
       droppedSnaps++;
-      // Saniyede düşen snap sayısını takip et; eşik aşılırsa uyarı göster
       var now2 = Date.now();
       if (now2 - dropWinStart >= 1000) {
         showDropWarn = dropWin > 5;
@@ -1187,9 +1263,7 @@
       return;
     }
     showDropWarn = false;
-    // Yavaş bilgisayar: gönderme pahalıysa hızı yarıya indir (30Hz → 15Hz)
     if (snapSlow && (++slowTick & 1)) return;
-    // Upload sınırı: son saniyelerde çok veri gittiyse bu kareyi atla (bir sonraki zaten daha günceldir)
     if (capKBs > 0) {
       var tb = nowMs();
       bucket = Math.min(capKBs * 256, bucket + (tb - bucketT) * capKBs * 1.024);
@@ -1224,7 +1298,7 @@
     snapCount++;
     var all = fullAll;
     fullAll = false;
-    var full = all || snapCount % 40 === 0; // 2 saniyede bir tüm hareket eden sabit nesneleri yeniden yolla
+    var full = all || snapCount % 40 === 0;
     var out = [];
     var p1b = level.pers1 && level.pers1.body && level.pers1.body.data;
     var p2b = level.pers2 && level.pers2.body && level.pers2.body.data;
@@ -1234,7 +1308,6 @@
       var p = b.GetPosition();
       var ang = b.GetAngle();
       if (b.GetType() === BODY_STATIC) {
-        // Sabit görünen ama script ile hareket ettirilen nesneler (kapı, platform vb.)
         var last = b.__onlLast;
         var moved =
           !last ||
@@ -1250,7 +1323,6 @@
         if (moved) b.__onlEverMoved = true;
         continue;
       }
-      // Uyuyan (hareketsiz) cisim: uyurken bir kez + periyodik tam yenilemede gönder, her karede değil. Karakterler hep gider.
       if (b.IsAwake && !b.IsAwake() && b !== p1b && b !== p2b) {
         if (b.__onlSleepSent && !full) continue;
         b.__onlSleepSent = true;
@@ -1284,8 +1356,6 @@
 
   /* ---------------- Guest: konum uygula ---------------- */
 
-  // Bu oyundaki Box2D sürümünde doğru fonksiyon SetTransformXYRadians(x, y, açı).
-  // (SetTransformXY / SetTransformVec yok; SetTransform(...) ise başka bir şey - bir "dönüşüm nesnesi" - bekler.)
   function setTransform(b, x, y, a) {
     if (b.SetTransformXYRadians) b.SetTransformXYRadians(x, y, a);
     else if (b.SetTransformXY) b.SetTransformXY(x, y, a);
@@ -1295,14 +1365,14 @@
   function applySnapshot(m) {
     if (!attached || !level) return;
     if (typeof m.n === "number") {
-      if (m.n <= lastSeq) return; // eski/tekrarlanan snapshot
+      if (m.n <= lastSeq) return;
       lastSeq = m.n;
     }
     pruneDead();
     var myName = levelName();
     if (m.sig !== sig || (m.f && myName && m.f !== myName)) {
       if (!sigWarned) {
-        say("bölüm uyuşmuyor! (sen: " + String(myName).slice(0, 60) + " / host: " + String(m.f).slice(0, 60) + ") Bölümü yeniden başlatın.");
+        say(t("mSigMismatch", String(myName).slice(0, 60), String(m.f).slice(0, 60)));
         log("SIG UYUŞMAZLIĞI sen=" + sig + "/" + myName + " host=" + m.sig + "/" + m.f);
         sigWarned = true;
       }
@@ -1312,7 +1382,6 @@
     sigWarned = false;
     alertSig = false;
 
-    // Host'un (Ateş) tuşları -> bizdeki Ateş karakteri
     setRemoteKeys(level.pers1.cursors, m.i[0], m.i[1], m.i[2]);
     var mine = level.pers2 && level.pers2.body && level.pers2.body.data;
     var B2Vec2 = window.box2d.b2Vec2;
@@ -1320,7 +1389,7 @@
     var mc = rawLocal || (level.pers2 && level.pers2.cursors);
     var idle = !(mc && (mc.left.isDown || mc.right.isDown || mc.up.isDown));
     var forced = Date.now() < forceSnapUntil;
-    var lead = EXTRAP_ON ? Math.min(0.15, rtt / 2000 + 0.01) : 0; // saniye: snapshot'ın yolculuk süresi
+    var lead = EXTRAP_ON ? Math.min(0.15, rtt / 2000 + 0.01) : 0;
     var fixes = 0;
     var worst = "";
     var fbBody = level.pers1 && level.pers1.body && level.pers1.body.data;
@@ -1339,8 +1408,6 @@
       var tx = e[1];
       var ty = e[2];
       if (!isStatic && lead) {
-        // Snapshot yolda 'lead' saniye eskidi: hedefi hızıyla ileri taşı (kendi karakterin dahil:
-        // girişler host ile aynı ana denk geldiği için guest'in durumu da güncel zamandadır)
         tx += e[4] * lead;
         ty += e[5] * lead;
       }
@@ -1354,10 +1421,8 @@
       if (isMine) myOffset = dist;
       var snap;
       if (isMine) {
-        // Kendi karakterin: dikey fark (yanlış platform) hemen ya da 2 kare sonra düzelt
         if (Math.abs(dy) > 0.35) ownVertCount++;
         else ownVertCount = 0;
-        // Ani platform değişimi (1.2m+) anında ışınla; küçük farklar 2 kare sonra
         snap = forced || dist > 0.5 || ownVertCount >= 2 || Math.abs(dy) > 1.2;
         if (snap) ownVertCount = 0;
       } else {
@@ -1365,7 +1430,6 @@
       }
       var f = isStatic || snap ? 1 : isMine ? (idle ? 0.45 : 0.25) : 0.5;
 
-      // Zaten (neredeyse) aynı yerdeyse dokunma: setTransform pahalı (geniş faz güncellemesi) ve cismi uyandırır
       if (!snap && dist < 0.005 && da < 0.005 && da > -0.005) {
         if (isMine) ownLog = [px0, py0, e[1], e[2]];
         if (b === fbBody) fbLog = [px0, py0, e[1], e[2]];
@@ -1426,12 +1490,11 @@
       log((bigErr ? "KAYMA " : "G ") + "su:" + fmt(ownLog) + " ateş:" + fmt(fbLog) + " snaps=" + snapApplied + " düzeltme=" + fixes);
     }
 
-    // Büyük düzeltmeleri kaydet: hangi nesne, ne kadar kaydı?
     if (fixes > 0) {
       var now = Date.now();
       if (now - lastFixSay > 2000) {
         lastFixSay = now;
-        say("senkron düzeltmesi " + worst);
+        say(t("mSyncFix", worst));
       }
     }
   }
@@ -1455,7 +1518,6 @@
 
   /* ---------------- Emoji (:sob → 😭) ---------------- */
 
-  // İsim=emoji listesi (Unicode emoji adları + popüler kısa adlar: sob, joy, skull, fire, ...)
   var EMOJI_RAW = "+1=👍|-1=👎|100=💯|abacus=🧮|accordion=🪗|adhesive_bandage=🩹|admission_tickets=🎟|adult=🧑|aerial_tramway=🚡|airplane=✈️|airplane_arriving=🛬|airplane_departure=🛫|alarm_clock=⏰|alembic=⚗️|alien=👽|alien_monster=👾|ambulance=🚑|american_football=🏈|amphora=🏺|anatomical_heart=🫀|anchor=⚓|angel=😇|anger=💢|anger_symbol=💢|angry=😠|angry_face=😠|anguished=😧|anguished_face=😧|ant=🐜|antenna_with_bars=📶|anticlockwise_downwards_and_upwards_open_circle_arrows=🔄|aquarius=♒|aries=♈|arrow_down=⬇️|arrow_left=⬅️|arrow_pointing_rightwards_then_curving_downwards=⤵️|arrow_pointing_rightwards_then_curving_upwards=⤴️|arrow_right=➡️|arrow_up=⬆️|articulated_lorry=🚛|artist_palette=🎨|astonished=😲|astonished_face=😲|athletic_shoe=👟|atom=⚛️|atom_symbol=⚛️|aubergine=🍆|auto_rickshaw=🛺|automated_teller_machine=🏧|automobile=🚗|avocado=🥑|axe=🪓|baby=👶|baby_angel=👼|baby_bottle=🍼|baby_chick=🐤|baby_symbol=🚼|back_of_envelope=🖂|back_with_leftwards_arrow_above=🔙|bacon=🥓|bactrian_camel=🐫|badger=🦡|badminton_racquet_and_shuttlecock=🏸|bagel=🥯|baggage_claim=🛄|baguette_bread=🥖|ball_of_yarn=🧶|ballet_shoes=🩰|balloon=🎈|ballot_bold_script_x=🗶|ballot_box_with_ballot=🗳|ballot_box_with_bold_check=🗹|ballot_box_with_bold_script_x=🗷|ballot_box_with_check=☑️|ballot_box_with_script_x=🗵|ballot_script_x=🗴|banana=🍌|banjo=🪕|bank=🏦|banknote_with_dollar=💵|banknote_with_dollar_sign=💵|banknote_with_euro=💶|banknote_with_euro_sign=💶|banknote_with_pound=💷|banknote_with_pound_sign=💷|banknote_with_yen=💴|banknote_with_yen_sign=💴|bar_chart=📊|bar_of_soap=🧼|barber_pole=💈|baseball=⚾|basket=🧺|basketball_and_hoop=🏀|bat=🦇|bath=🛀|bathtub=🛁|battery=🔋|beach_with_umbrella=🏖|beamed_ascending_musical_notes=🎜|beamed_descending_musical_notes=🎝|beans=🫘|bear=🐻|bear_face=🐻|bearded_person=🧔|beating_heart=💓|beaver=🦫|bed=🛏|bee=🐝|beer=🍺|beer_mug=🍺|beetle=🪲|bell=🔔|bell_pepper=🫑|bell_with_cancellation_stroke=🔕|bellhop_bell=🛎|bento_box=🍱|beverage_box=🧃|bicycle=🚲|bicyclist=🚴|bikini=👙|billed_cap=🧢|billiards=🎱|biohazard=☣️|biohazard_sign=☣️|bird=🐦|birthday_cake=🎂|bison=🦬|biting_lip=🫦|black_chess_pawn=♟️|black_circle=⚫|black_circle_for_record=⏺️|black_club_suit=♣️|black_diamond_suit=♦️|black_down_pointing_backhand_index=🖣|black_down_pointing_double_triangle=⏬|black_droplet=🌢|black_folder=🖿|black_hard_shell_floppy_disk=🖪|black_heart=🖤|black_heart_suit=♥️|black_large_square=⬛|black_left_pointing_backhand_index=🖜|black_left_pointing_double_triangle=⏪|black_left_pointing_double_triangle_with_vertical_bar=⏮️|black_left_pointing_triangle=◀️|black_medium_small_square=◾|black_medium_square=◼️|black_nib=✒️|black_pennant=🏲|black_pushpin=🖈|black_question_mark_ornament=❓|black_right_pointing_backhand_index=🖝|black_right_pointing_double_triangle=⏩|black_right_pointing_double_triangle_with_vertical_bar=⏭️|black_right_pointing_triangle=▶️|black_right_pointing_triangle_with_double_vertical_bar=⏯️|black_rightwards_arrow=➡️|black_rosette=🏶|black_scissors=✂️|black_skull_and_crossbones=🕱|black_small_square=▪️|black_spade_suit=♠️|black_square_button=🔲|black_square_for_stop=⏹️|black_sun_with_rays=☀️|black_telephone=☎️|black_touchtone_telephone=🕿|black_universal_recycling=♻️|black_universal_recycling_symbol=♻️|black_up_pointing_backhand_index=🖢|black_up_pointing_double_triangle=⏫|blossom=🌼|blowfish=🐡|blue_book=📘|blue_circle=🔵|blue_heart=💙|blueberries=🫐|blush=😊|boar=🐗|bomb=💣|bone=🦴|book=🕮|bookmark=🔖|bookmark_tabs=📑|books=📚|boom=💥|boomerang=🪃|bottle_with_popping_cork=🍾|bouquet=💐|bouquet_of_flowers=🎕|bow=🏹|bow_and_arrow=🏹|bowl_of_hygieia=🕏|bowl_with_spoon=🥣|bowling=🎳|boxing_glove=🥊|boy=👦|boys=🛉|boys_symbol=🛉|brain=🧠|bread=🍞|breast_feeding=🤱|brick=🧱|bride_with_veil=👰|bridge_at_night=🌉|briefcase=💼|briefs=🩲|broccoli=🥦|broken_heart=💔|broom=🧹|brown_heart=🤎|bruh=😐|bubble_tea=🧋|bubbles=🫧|bucket=🪣|bug=🐛|building_construction=🏗|bulb=💡|bullhorn=🕫|bullhorn_with_sound_waves=🕬|burger=🍔|burrito=🌯|bus=🚌|bus_stop=🚏|bust_in_silhouette=👤|busts_in_silhouette=👥|butter=🧈|butterfly=🦋|cactus=🌵|cake=🍰|calendar=📅|call_me=🤙|call_me_hand=🤙|camera=📷|camera_with_flash=📸|camping=🏕|cancellation_x=🗙|cancer=♋|candle=🕯️|candy=🍬|canned_food=🥫|canoe=🛶|capricorn=♑|card_file_box=🗃|card_index=📇|card_index_dividers=🗂|carousel_horse=🎠|carp_streamer=🎏|carpentry_saw=🪚|carrot=🥕|cat=🐱|cat_face=🐱|cat_face_with_tears_of_joy=😹|cat_face_with_wry_smile=😼|celtic_cross=🕈|chains=⛓️|chair=🪑|chart_with_downwards_trend=📉|chart_with_upwards_trend=📈|chart_with_upwards_trend_and_yen=💹|chart_with_upwards_trend_and_yen_sign=💹|check=✅|check_mark=✔️|cheering_megaphone=📣|cheese_wedge=🧀|chequered_flag=🏁|cherries=🍒|cherry_blossom=🌸|chess_pawn=♟️|chestnut=🌰|chicken=🐔|child=🧒|children_crossing=🚸|chipmunk=🐿|chocolate_bar=🍫|chopsticks=🥢|christmas_tree=🎄|church=⛪|cinema=🎦|circle_for_record=⏺️|circled_cross_formee=🤂|circled_cross_formee_with_four_dots=🤀|circled_cross_formee_with_two_dots=🤁|circled_cross_pommee=🕀|circled_ideograph_accept=🉑|circled_ideograph_advantage=🉐|circled_ideograph_congratulation=㊗️|circled_ideograph_secret=㊙️|circled_information_source=🛈|circled_latin_capital_letter_m=Ⓜ️|circus_tent=🎪|cityscape=🏙|cityscape_at_dusk=🌆|cjk_unified_ideograph_5272=🈹|cjk_unified_ideograph_5408=🈴|cjk_unified_ideograph_55b6=🈺|cjk_unified_ideograph_6307=🈯|cjk_unified_ideograph_6708=🈷|cjk_unified_ideograph_6709=🈶|cjk_unified_ideograph_6e80=🈵|cjk_unified_ideograph_7121=🈚|cjk_unified_ideograph_7533=🈸|cjk_unified_ideograph_7981=🈲|cjk_unified_ideograph_7a7a=🈳|clamshell_mobile_phone=🖁|clap=👏|clapper_board=🎬|clapping_hands=👏|clapping_hands_sign=👏|classical_building=🏛|clinking_beer_mugs=🍻|clinking_glasses=🥂|clipboard=📋|clock=🕐|clock_face_eight_oclock=🕗|clock_face_eight_thirty=🕣|clock_face_eleven_oclock=🕚|clock_face_eleven_thirty=🕦|clock_face_five_oclock=🕔|clock_face_five_thirty=🕠|clock_face_four_oclock=🕓|clock_face_four_thirty=🕟|clock_face_nine_oclock=🕘|clock_face_nine_thirty=🕤|clock_face_one_oclock=🕐|clock_face_one_thirty=🕜|clock_face_seven_oclock=🕖|clock_face_seven_thirty=🕢|clock_face_six_oclock=🕕|clock_face_six_thirty=🕡|clock_face_ten_oclock=🕙|clock_face_ten_thirty=🕥|clock_face_three_oclock=🕒|clock_face_three_thirty=🕞|clock_face_twelve_oclock=🕛|clock_face_twelve_thirty=🕧|clock_face_two_oclock=🕑|clock_face_two_thirty=🕝|clockwise_downwards_and_upwards_open_circle_arrows=🔃|clockwise_right_and_left_semicircle_arrows=🗘|clockwise_rightwards_and_leftwards_open_circle_arrows=🔁|clockwise_rightwards_and_leftwards_open_circle_arrows_with_circled_one_overlay=🔂|closed_book=📕|closed_lock_with_key=🔐|closed_mailbox_with_lowered_flag=📪|closed_mailbox_with_raised_flag=📫|closed_umbrella=🌂|cloud=☁️|cloud_with_lightning=🌩|cloud_with_rain=🌧|cloud_with_snow=🌨|cloud_with_tornado=🌪|clown=🤡|clown_face=🤡|club_suit=♣️|coat=🧥|cockroach=🪳|cocktail_glass=🍸|coconut=🥥|coffee=☕|coffin=⚰️|coin=🪙|cold=🥶|cold_sweat=😰|collision=💥|collision_symbol=💥|comet=☄️|compass=🧭|compression=🗜|confetti=🎊|confetti_ball=🎊|confounded=😖|confounded_face=😖|confused=😕|confused_face=😕|construction=🚧|construction_sign=🚧|construction_worker=👷|control_knobs=🎛|controller=🎮|convenience_store=🏪|cooked_rice=🍚|cookie=🍪|cooking=🍳|cool=😎|cool_button=🆒|copyright=©️|copyright_sign=©️|coral=🪸|couch_and_lamp=🛋|couple_with_heart=💑|cow=🐮|cow_face=🐮|cowboy_hat=🤠|crab=🦀|credit_card=💳|crescent_moon=🌙|cricket=🦗|cricket_bat_and_ball=🏏|cringe=😬|crocodile=🐊|croissant=🥐|cross=❌|cross_mark=❌|cross_pommee=🕂|cross_pommee_with_half_circle_below=🕁|crossed_fingers=🤞|crossed_flags=🎌|crossed_swords=⚔️|crown=👑|crutch=🩼|cry=😢|crying=😢|crying_cat=😿|crying_cat_face=😿|crying_face=😢|crystal_ball=🔮|cucumber=🥒|cup_with_straw=🥤|cupcake=🧁|curling_stone=🥌|curly_loop=➰|currency_exchange=💱|curry_and_rice=🍛|custard=🍮|customs=🛃|cut_of_meat=🥩|cyclone=🌀|dagger_knife=🗡|dancer=💃|dango=🍡|dark_sunglasses=🕶|dash=💨|dash_symbol=💨|dead=💀|deaf_person=🧏|deciduous_tree=🌳|decrease_font_size=🗛|decrease_font_size_symbol=🗛|deer=🦌|delivery_truck=🚚|department_store=🏬|derelict_house_building=🏚|desert=🏜|desert_island=🏝|desktop_computer=🖥|desktop_window=🗔|devil=😈|diagonal_mouth=🫤|diamond_shape_with_a_dot_inside=💠|diamond_suit=♦️|dice=🎲|diesel_locomotive=🛲|direct_hit=🎯|disappointed=😞|disappointed_but_relieved=😥|disappointed_but_relieved_face=😥|disappointed_face=😞|disguised=🥸|disguised_face=🥸|diving_mask=🤿|division_sign=➗|diya_lamp=🪔|dizzy=💫|dizzy_face=😵|dizzy_symbol=💫|dna_double_helix=🧬|do_not_litter=🚯|do_not_litter_symbol=🚯|document=🗎|document_with_picture=🖻|document_with_text=🖹|document_with_text_and_picture=🖺|dodo=🦤|dog=🐶|dog_face=🐶|dollar=💵|dollar_sign=💲|dolphin=🐬|donkey=🫏|door=🚪|dotted_line=🫥|dotted_line_face=🫥|double_curly_loop=➿|double_exclamation_mark=‼️|double_vertical_bar=⏸️|doughnut=🍩|dove_of_peace=🕊|down_pointing_backhand_index=👇|down_pointing_double_triangle=⏬|down_pointing_left_hand_index=🖗|down_pointing_red_triangle=🔻|down_pointing_small_red_triangle=🔽|downward_facing_hook=🤈|downward_facing_hook_with_dot=🤊|downward_facing_notched_hook=🤉|downward_facing_notched_hook_with_dot=🤋|downwards_black_arrow=⬇️|dragon=🐉|dragon_face=🐲|dress=👗|dromedary_camel=🐪|drooling=🤤|drooling_face=🤤|drop_of_blood=🩸|droplet=💧|drum_with_drumsticks=🥁|duck=🦆|dumpling=🥟|dvd=📀|e_mail=📧|e_mail_symbol=📧|eagle=🦅|ear=👂|ear_of_maize=🌽|ear_of_rice=🌾|ear_with_hearing_aid=🦻|earth=🌍|earth_globe_americas=🌎|earth_globe_asia_australia=🌏|earth_globe_europe_africa=🌍|egg=🥚|eight_pointed_black_star=✴️|eight_spoked_asterisk=✳️|eject=⏏️|eject_symbol=⏏️|electric_light_bulb=💡|electric_plug=🔌|electric_torch=🔦|elephant=🐘|elevator=🛗|elf=🧝|emoji_component_bald=🦲|emoji_component_curly_hair=🦱|emoji_component_red_hair=🦰|emoji_component_white_hair=🦳|empty_document=🗋|empty_nest=🪹|empty_note=🗅|empty_note_pad=🗇|empty_note_page=🗆|empty_page=🗌|empty_pages=🗍|end_with_leftwards_arrow_above=🔚|envelope=✉️|envelope_with_downwards_arrow_above=📩|envelope_with_lightning=🖄|european_castle=🏰|european_post_office=🏤|evergreen_tree=🌲|exclamation=❗|exclamation_mark_ornament=❕|exclamation_mark_symbol=❗|exclamation_question_mark=⁉️|exploding_head=🤯|expressionless=😑|expressionless_face=😑|extraterrestrial_alien=👽|eye=👁️|eyeglasses=👓|eyeroll=🙄|eyes=👀|eyes_emoji=👀|face_holding_back_tears=🥹|face_massage=💆|face_palm=🤦|face_savouring_delicious_food=😋|face_screaming_in_fear=😱|face_throwing_a_kiss=😘|face_with_cold_sweat=😓|face_with_cowboy_hat=🤠|face_with_diagonal_mouth=🫤|face_with_finger_covering_closed_lips=🤫|face_with_head_bandage=🤕|face_with_look_of_triumph=😤|face_with_medical_mask=😷|face_with_monocle=🧐|face_with_no_good_gesture=🙅|face_with_ok_gesture=🙆|face_with_one_eyebrow_raised=🤨|face_with_open_eyes_and_hand_over_mouth=🫢|face_with_open_mouth=😮|face_with_open_mouth_and_cold_sweat=😰|face_with_open_mouth_vomiting=🤮|face_with_party_horn_and_party_hat=🥳|face_with_peeking_eye=🫣|face_with_pleading_eyes=🥺|face_with_rolling_eyes=🙄|face_with_stuck_out_tongue=😛|face_with_stuck_out_tongue_and_tightly_closed_eyes=😝|face_with_stuck_out_tongue_and_winking_eye=😜|face_with_tears_of_joy=😂|face_with_thermometer=🤒|face_with_uneven_eyes_and_wavy_mouth=🥴|face_without_mouth=😶|facepalm=🤦|factory=🏭|fairy=🧚|falafel=🧆|fallen_leaf=🍂|family=👪|father_christmas=🎅|fax_icon=🖷|fax_machine=📠|fearful=😨|fearful_face=😨|feather=🪶|female=♀️|female_sign=♀️|fencer=🤺|ferris_wheel=🎡|ferry=⛴️|field_hockey_stick_and_ball=🏑|file_cabinet=🗄|file_folder=📁|film_frames=🎞|film_projector=📽|finger_covering_closed_lips=🤫|fire=🔥|fire_engine=🚒|fire_extinguisher=🧯|fireball=☄️|firecracker=🧨|firework_sparkler=🎇|fireworks=🎆|first_place_medal=🥇|first_quarter_moon=🌓|first_quarter_moon_symbol=🌓|first_quarter_moon_with=🌛|first_quarter_moon_with_face=🌛|fish=🐟|fish_cake_with_swirl_design=🍥|fishing_pole_and_fish=🎣|fist=✊|fisted_hand=👊|fisted_hand_sign=👊|flag_ae=🇦🇪|flag_ar=🇦🇷|flag_at=🇦🇹|flag_au=🇦🇺|flag_az=🇦🇿|flag_be=🇧🇪|flag_bg=🇧🇬|flag_br=🇧🇷|flag_ca=🇨🇦|flag_ch=🇨🇭|flag_cn=🇨🇳|flag_cz=🇨🇿|flag_de=🇩🇪|flag_dk=🇩🇰|flag_dz=🇩🇿|flag_eg=🇪🇬|flag_es=🇪🇸|flag_fi=🇫🇮|flag_fr=🇫🇷|flag_gb=🇬🇧|flag_gr=🇬🇷|flag_hu=🇭🇺|flag_id=🇮🇩|flag_ie=🇮🇪|flag_il=🇮🇱|flag_in=🇮🇳|flag_in_hole=⛳|flag_iq=🇮🇶|flag_ir=🇮🇷|flag_it=🇮🇹|flag_jp=🇯🇵|flag_ke=🇰🇪|flag_kr=🇰🇷|flag_ma=🇲🇦|flag_mx=🇲🇽|flag_ng=🇳🇬|flag_nl=🇳🇱|flag_no=🇳🇴|flag_ph=🇵🇭|flag_pk=🇵🇰|flag_pl=🇵🇱|flag_pt=🇵🇹|flag_ro=🇷🇴|flag_ru=🇷🇺|flag_sa=🇸🇦|flag_se=🇸🇪|flag_th=🇹🇭|flag_tn=🇹🇳|flag_tr=🇹🇷|flag_ua=🇺🇦|flag_us=🇺🇸|flag_vn=🇻🇳|flag_za=🇿🇦|flamingo=🦩|flat_shoe=🥿|flatbread=🫓|fleur_de_lis=⚜️|flexed_biceps=💪|floppy_disk=💾|flower=💮|flower_playing_cards=🎴|flushed=😳|flushed_face=😳|flute=🪈|fly=🪰|flying_disc=🥏|flying_envelope=🖅|flying_saucer=🛸|fog=🌫|foggy=🌁|folder=🗀|folding_hand_fan=🪭|fondue=🫕|foot=🦶|footprints=👣|fork_and_knife=🍴|fork_and_knife_with_plate=🍽|fortune_cookie=🥠|fountain=⛲|four_leaf_clover=🍀|fox=🦊|fox_face=🦊|frame_with_an_x=🖾|frame_with_picture=🖼|frame_with_tiles=🖽|free=🆓|freezing=🥶|freezing_face=🥶|french_fries=🍟|fried_shrimp=🍤|fries=🍟|frog=🐸|frog_face=🐸|front_facing_baby_chick=🐥|frowning=☹️|frowning_face=☹️|frowning_face_with_open_mouth=😦|fuel_pump=⛽|full_moon=🌕|full_moon_symbol=🌕|full_moon_with=🌝|full_moon_with_face=🌝|funeral_urn=⚱️|game_die=🎲|gamepad=🎮|garlic=🧄|gear=⚙️|gem=💎|gem_stone=💎|gemini=♊|genie=🧞|gg=🎮|ghost=👻|gift=🎁|ginger_root=🫚|giraffe=🦒|giraffe_face=🦒|girl=👧|girls=🛊|girls_symbol=🛊|glass_of_milk=🥛|globe=🌍|globe_with_meridians=🌐|gloves=🧤|glowing_star=🌟|goal_net=🥅|goat=🐐|goggles=🥽|golfer=🏌|goose=🪿|gorilla=🦍|graduation_cap=🎓|grapes=🍇|green_apple=🍏|green_book=📗|green_circle=🟢|green_heart=💚|green_salad=🥗|grey_heart=🩶|grimacing=😬|grimacing_face=😬|grin=😁|grinning=😀|grinning_cat_face_with_smiling_eyes=😸|grinning_face=😀|grinning_face_with_one_large_and_one_small_eye=🤪|grinning_face_with_smiling_eyes=😁|grinning_face_with_star_eyes=🤩|growing_heart=💗|guardsman=💂|guide_dog=🦮|guitar=🎸|hair_pick=🪮|haircut=💇|halo=😇|hamburger=🍔|hammer=🔨|hammer_and_pick=⚒️|hammer_and_wrench=🛠|hamsa=🪬|hamster=🐹|hamster_face=🐹|hand_over_mouth=🤭|hand_with_index_and_middle_fingers_crossed=🤞|hand_with_index_finger_and_thumb_crossed=🫰|handbag=👜|handball=🤾|handshake=🤝|happy_person_raising_one_hand=🙋|hard_disk=🖴|hard_shell_floppy_disk=🖪|hatching_chick=🐣|head_bandage=🤕|headphone=🎧|headphones=🎧|headstone=🪦|hear_no_evil=🙉|hear_no_evil_monkey=🙉|heart=❤️|heart_decoration=💟|heart_exclamation_mark_ornament=❣️|heart_eyes=😍|heart_hands=🫶|heart_shaped_eyes=😍|heart_suit=♥️|heart_with_arrow=💘|heart_with_ribbon=💝|heart_with_tip_on_the_left=🎔|heartpulse=💗|heavy_black_heart=❤️|heavy_check_mark=✔️|heavy_division=➗|heavy_division_sign=➗|heavy_dollar=💲|heavy_dollar_sign=💲|heavy_exclamation_mark=❗|heavy_exclamation_mark_symbol=❗|heavy_heart_exclamation_mark_ornament=❣️|heavy_large_circle=⭕|heavy_latin_cross=🕇|heavy_minus=➖|heavy_minus_sign=➖|heavy_multiplication_x=✖️|heavy_plus=➕|heavy_plus_sign=➕|hedgehog=🦔|helicopter=🚁|helmet_with_white_cross=⛑️|herb=🌿|hibiscus=🌺|high_brightness=🔆|high_brightness_symbol=🔆|high_heeled_shoe=👠|high_speed_train=🚄|high_speed_train_with_bullet_nose=🚅|high_voltage=⚡|high_voltage_sign=⚡|hiking_boot=🥾|hindu_temple=🛕|hippopotamus=🦛|hmm=🤔|hocho=🔪|holding_back_tears=🥹|hole=🕳|honey_pot=🍯|honeybee=🐝|hook=🪝|horizontal_traffic_light=🚥|horns=😈|horse=🐴|horse_face=🐴|horse_racing=🏇|hospital=🏥|hot=🥵|hot_beverage=☕|hot_dog=🌭|hot_pepper=🌶|hot_springs=♨️|hotel=🏨|hourglass=⏳|hourglass_with_flowing_sand=⏳|house_building=🏠|house_buildings=🏘|house_with_garden=🏡|hugging=🤗|hugging_face=🤗|hundred=💯|hundred_points=💯|hundred_points_symbol=💯|hushed=😯|hushed_face=😯|hut=🛖|hyacinth=🪻|i_love_you_hand=🤟|i_love_you_hand_sign=🤟|ice=🧊|ice_cream=🍨|ice_cube=🧊|ice_hockey_stick_and_puck=🏒|ice_skate=⛸️|identification_card=🪪|imp=👿|inbox_tray=📥|incoming_envelope=📨|increase_font_size=🗚|increase_font_size_symbol=🗚|index_pointing_at_the_viewer=🫵|information_desk_person=💁|information_source=ℹ️|innocent=😇|input_symbol_for_latin_capital_letters=🔠|input_symbol_for_latin_letters=🔤|input_symbol_for_latin_small_letters=🔡|input_symbol_for_numbers=🔢|input_symbol_for_symbols=🔣|izakaya_lantern=🏮|jack_o_lantern=🎃|japanese_castle=🏯|japanese_dolls=🎎|japanese_goblin=👺|japanese_ogre=👹|japanese_post_office=🏣|japanese_symbol_for_beginner=🔰|jar=🫙|jeans=👖|jellyfish=🪼|jigsaw_puzzle_piece=🧩|joy=😂|joystick=🕹️|juggling=🤹|kaaba=🕋|kangaroo=🦘|katakana_koko=🈁|katakana_sa=🈂|key=🔑|keyboard=⌨️|keyboard_and_mouse=🖦|keycap_ten=🔟|khanda=🪯|kimono=👘|kiss=😘|kiss_mark=💋|kissing=😗|kissing_cat_face_with_closed_eyes=😽|kissing_face=😗|kissing_face_with_closed_eyes=😚|kissing_face_with_smiling_eyes=😙|kissing_heart=😘|kite=🪁|kiwifruit=🥝|kneeling_person=🧎|knot=🪢|koala=🐨|lab_coat=🥼|label=🏷|lacrosse_stick_and_ball=🥍|ladder=🪜|lady_beetle=🐞|large_blue_circle=🔵|large_blue_diamond=🔷|large_circle=⭕|large_orange_diamond=🔶|large_red_circle=🔴|large_square=⬛|last_quarter_moon=🌗|last_quarter_moon_symbol=🌗|last_quarter_moon_with=🌜|last_quarter_moon_with_face=🌜|latin_cross=✝️|laughing=😆|leaf_fluttering_in_wind=🍃|leafy_green=🥬|ledger=📒|left_anger_bubble=🗮|left_facing_fist=🤛|left_half_circle=🤇|left_half_circle_with_dot=🤆|left_half_circle_with_four_dots=🤃|left_half_circle_with_three_dots=🤄|left_half_circle_with_two_dots=🤅|left_hand_telephone_receiver=🕻|left_luggage=🛅|left_pointing_backhand_index=👈|left_pointing_double_triangle=⏪|left_pointing_double_triangle_with_vertical_bar=⏮️|left_pointing_magnifying_glass=🔍|left_pointing_triangle=◀️|left_right_arrow=↔️|left_speech_bubble=🗨|left_thought_bubble=🗬|left_writing_hand=🖎|leftwards_arrow_with_hook=↩️|leftwards_black_arrow=⬅️|leftwards_hand=🫲|leftwards_pushing_hand=🫷|leg=🦵|lemon=🍋|leo=♌|leopard=🐆|level_slider=🎚|libra=♎|light_blue_heart=🩵|light_check_mark=🗸|light_rail=🚈|lightning_mood=🗲|lightning_mood_bubble=🗱|link=🔗|link_symbol=🔗|linked_paperclips=🖇|lion=🦁|lion_face=🦁|lips=👄|lipstick=💄|lizard=🦎|llama=🦙|lmao=🤣|lobster=🦞|lock=🔒|lock_with_ink_pen=🔏|lol=😂|lollipop=🍭|long_drum=🪘|look_of_triumph=😤|lotion_bottle=🧴|lotus=🪷|loudly_crying=😭|loudly_crying_face=😭|love=😍|love_hotel=🏩|love_letter=💌|low_battery=🪫|low_brightness=🔅|low_brightness_symbol=🔅|lower_left_ballpoint_pen=🖊|lower_left_crayon=🖍|lower_left_fountain_pen=🖋|lower_left_paintbrush=🖌|lower_left_pencil=🖉|lower_right_shadowed_white_circle=🔾|luggage=🧳|lungs=🫁|lying=🤥|lying_face=🤥|mage=🧙|magic_wand=🪄|magnet=🧲|mahjong_tile_red_dragon=🀄|male=♂️|male_sign=♂️|male_with_stroke_and_male_and_female=⚧️|male_with_stroke_and_male_and_female_sign=⚧️|mammoth=🦣|man=👨|man_and_woman_holding_hands=👫|man_dancing=🕺|man_in_business_suit_levitating=🕴|man_in_tuxedo=🤵|man_with_gua_pi_mao=👲|man_with_turban=👳|mango=🥭|mans_shoe=👞|mantelpiece_clock=🕰|manual_wheelchair=🦽|maple_leaf=🍁|maracas=🪇|martial_arts_uniform=🥋|mask=😷|massage=💆|mate_drink=🧉|maximize=🗖|meat_on_bone=🍖|mechanical_arm=🦾|mechanical_leg=🦿|medal=🏅|medical_mask=😷|medium_black_circle=⚫|medium_small_square=◽|medium_square=◻️|medium_star=⭐|medium_white_circle=⚪|melon=🍈|melting=🫠|melting_face=🫠|memo=📝|menorah_with_nine_branches=🕎|mens=🚹|mens_symbol=🚹|merperson=🧜|metal=🤘|metro=🚇|mic=🎤|microbe=🦠|microphone=🎤|microscope=🔬|military_helmet=🪖|military_medal=🎖|milky_way=🌌|minibus=🚐|minidisc=💽|minimize=🗕|minus=➖|minus_sign=➖|mirror=🪞|mirror_ball=🪩|mobile_phone=📱|mobile_phone_off=📴|mobile_phone_with_rightwards_arrow_at_left=📲|modern_pentathlon=🤻|money=💰|money_bag=💰|money_mouth=🤑|money_mouth_face=🤑|money_with_wings=💸|moneybag=💰|monkey=🐵|monkey_face=🐵|monocle=🧐|monorail=🚝|mood_bubble=🗰|moon=🌙|moon_cake=🥮|moon_viewing_ceremony=🎑|moose=🫎|mosque=🕌|mosquito=🦟|mother_christmas=🤶|motor_boat=🛥|motor_scooter=🛵|motorized_wheelchair=🦼|motorway=🛣|mount_fuji=🗻|mountain=⛰️|mountain_bicyclist=🚵|mountain_cableway=🚠|mountain_railway=🚞|mouse=🐭|mouse_face=🐭|mouse_trap=🪤|mouth=👄|movie_camera=🎥|moyai=🗿|multiple_musical_notes=🎶|multiplication_x=✖️|muscle=💪|mushroom=🍄|music=🎵|musical_keyboard=🎹|musical_keyboard_with_jacks=🎘|musical_note=🎵|musical_score=🎼|nail_care=💅|nail_polish=💅|name_badge=📛|national_park=🏞|nauseated=🤢|nauseated_face=🤢|nazar_amulet=🧿|necktie=👔|negative_squared_cross_mark=❎|negative_squared_latin_capital_letter_a=🅰|negative_squared_latin_capital_letter_b=🅱|negative_squared_latin_capital_letter_o=🅾|negative_squared_latin_capital_letter_p=🅿|nerd=🤓|nerd_face=🤓|nest_with_eggs=🪺|nesting_dolls=🪆|neutral=😐|neutral_face=😐|new=🆕|new_moon=🌑|new_moon_symbol=🌑|new_moon_with=🌚|new_moon_with_face=🌚|newspaper=📰|nib=✒️|nice=👌|night_with_stars=🌃|ninja=🥷|no=🚫|no_bicycles=🚳|no_entry=⛔|no_entry_sign=🚫|no_good_gesture=🙅|no_mobile_phones=📵|no_mouth=😶|no_one_under_eighteen=🔞|no_one_under_eighteen_symbol=🔞|no_pedestrians=🚷|no_piracy=🕲|no_smoking=🚭|no_smoking_symbol=🚭|non_potable_water=🚱|non_potable_water_symbol=🚱|north_east_arrow=↗️|north_west_arrow=↖️|northeast_pointing_airplane=🛪|nose=👃|notched_left_semicircle_with_three_dots=🕃|notched_right_semicircle_with_three_dots=🕄|note=🗈|note_pad=🗊|note_page=🗉|notebook=📓|notebook_with_decorative_cover=📔|notes=🎶|nut_and_bolt=🔩|ocean=🌊|octagonal=🛑|octagonal_sign=🛑|octopus=🐙|oden=🍢|office_building=🏢|oil_drum=🛢|ok=🆗|ok_gesture=🙆|ok_hand=👌|ok_hand_sign=👌|old_key=🗝|old_personal_computer=🖳|older_adult=🧓|older_man=👴|older_woman=👵|olive=🫒|om_symbol=🕉|omg=😱|on_with_exclamation_mark_with_left_right_arrow_above=🔛|oncoming_automobile=🚘|oncoming_bus=🚍|oncoming_fire_engine=🛱|oncoming_police_car=🚔|oncoming_taxi=🚖|one_button_mouse=🖯|one_eyebrow_raised=🤨|one_piece_swimsuit=🩱|onion=🧅|open_book=📖|open_eyes_and_hand_over_mouth=🫢|open_file_folder=📂|open_folder=🗁|open_hands=👐|open_hands_sign=👐|open_lock=🔓|open_mailbox_with_lowered_flag=📭|open_mailbox_with_raised_flag=📬|open_mouth=😮|open_mouth_and_cold_sweat=😅|open_mouth_and_smiling_eyes=😄|open_mouth_and_tightly_closed_eyes=😆|open_mouth_vomiting=🤮|ophiuchus=⛎|optical_disc=💿|optical_disc_icon=🖸|orange_book=📙|orange_circle=🟠|orange_heart=🧡|orangutan=🦧|orthodox_cross=☦️|otter=🦦|outbox_tray=📤|overheated=🥵|overheated_face=🥵|overlap=🗗|owl=🦉|ox=🐂|oyster=🦪|package=📦|page=🗏|page_facing_up=📄|page_with_circled_text=🗟|page_with_curl=📃|pager=📟|pages=🗐|pagoda=🛔|palm=🤦|palm_down_hand=🫳|palm_tree=🌴|palm_up_hand=🫴|palms_up_together=🤲|pancakes=🥞|panda=🐼|panda_face=🐼|paperclip=📎|parachute=🪂|parrot=🦜|part_alternation_mark=〽️|party=🥳|party_horn_and_party_hat=🥳|party_popper=🎉|partying=🥳|passenger_ship=🛳|passport_control=🛂|paw_prints=🐾|pea_pod=🫛|peace=☮️|peace_symbol=☮️|peach=🍑|peacock=🦚|peanuts=🥜|pear=🍐|pedestrian=🚶|peeking_eye=🫣|pen_over_stamped_envelope=🖆|pencil=✏️|penguin=🐧|pennant=🏱|pensive=😔|pensive_face=😔|people_hugging=🫂|performing_arts=🎭|permanent_paper=♾️|permanent_paper_sign=♾️|persevere=😣|persevering=😣|persevering_face=😣|person_bowing_deeply=🙇|person_climbing=🧗|person_doing_cartwheel=🤸|person_frowning=🙍|person_in_lotus_position=🧘|person_in_steamy_room=🧖|person_raising_both_hands_in_celebration=🙌|person_with_ball=⛹️|person_with_blond_hair=👱|person_with_crown=🫅|person_with_folded_hands=🙏|person_with_headscarf=🧕|person_with_pouting=🙎|person_with_pouting_face=🙎|personal_computer=💻|petri_dish=🧫|pick=⛏️|pickup_truck=🛻|pie=🥧|pig=🐷|pig_face=🐷|pig_nose=🐽|pile_of_poo=💩|pill=💊|pinata=🪅|pinched=🤌|pinched_fingers=🤌|pinching_hand=🤏|pine_decoration=🎍|pineapple=🍍|pink_heart=🩷|pisces=♓|pistol=🔫|pizza=🍕|placard=🪧|place_of_worship=🛐|playground_slide=🛝|playing_card_black_joker=🃏|pleading=🥺|pleading_eyes=🥺|plug=🔌|plunger=🪠|plus=➕|plus_sign=➕|pocket_calculator=🖩|pog=😮|poggers=😮|point_down=👇|point_left=👈|point_right=👉|point_up=☝️|police_car=🚓|police_cars_revolving_light=🚨|police_officer=👮|poodle=🐩|poop=💩|popcorn=🍿|portable_stereo=📾|postal_horn=📯|postbox=📮|pot_of_food=🍲|potable_water=🚰|potable_water_symbol=🚰|potato=🥔|potted_plant=🪴|pouch=👝|poultry_leg=🍗|pouring_liquid=🫗|pouting=😡|pouting_cat=😾|pouting_cat_face=😾|pouting_face=😡|pray=🙏|prayer_beads=📿|pregnant_man=🫃|pregnant_person=🫄|pregnant_woman=🤰|pretzel=🥨|prince=🤴|princess=👸|printer=🖨|printer_icon=🖶|probing_cane=🦯|prohibited=🛇|prohibited_sign=🛇|public_address_loudspeaker=📢|punch=👊|purple_circle=🟣|purple_heart=💜|purse=👛|pushpin=📌|put_litter_in_its_place=🚮|put_litter_in_its_place_symbol=🚮|puzzle=🧩|question=❓|question_mark_ornament=❓|rabbit=🐇|rabbit_face=🐰|raccoon=🦝|racing_car=🏎|racing_motorcycle=🏍|radio=📻|radio_button=🔘|radioactive=☢️|radioactive_sign=☢️|rage=😡|railway_car=🚃|railway_track=🛤|rainbow=🌈|raised_back_of_hand=🤚|raised_eyebrow=🤨|raised_fist=✊|raised_hand=✋|raised_hand_with_fingers_splayed=🖐|raised_hand_with_part_between_middle_and_ring_fingers=🖖|raised_hands=🙌|ram=🐏|rat=🐀|razor=🪒|receipt=🧾|recreational_vehicle=🚙|red_apple=🍎|red_circle=🔴|red_gift_envelope=🧧|registered=®️|registered_sign=®️|relieved=😌|relieved_face=😌|reminder_ribbon=🎗|restroom=🚻|reversed_hand_with_middle_finger_extended=🖕|reversed_raised_hand_with_fingers_splayed=🖑|reversed_thumbs_down=🖓|reversed_thumbs_down_sign=🖓|reversed_thumbs_up=🖒|reversed_thumbs_up_sign=🖒|reversed_victory_hand=🖔|revolving_hearts=💞|rhinoceros=🦏|ribbon=🎀|rice_ball=🍙|rice_cracker=🍘|rifle=🥆|right_anger_bubble=🗯|right_facing_fist=🤜|right_hand_telephone_receiver=🕽|right_pointing_backhand_index=👉|right_pointing_double_triangle=⏩|right_pointing_double_triangle_with_vertical_bar=⏭️|right_pointing_magnifying_glass=🔎|right_pointing_triangle=▶️|right_pointing_triangle_with_double_vertical_bar=⏯️|right_speaker=🕨|right_speaker_with_one_sound_wave=🕩|right_speaker_with_three_sound_waves=🕪|right_speech_bubble=🗩|right_thought_bubble=🗭|rightwards_arrow=➡️|rightwards_arrow_with_hook=↪️|rightwards_hand=🫱|rightwards_pushing_hand=🫸|ring=💍|ring_buoy=🛟|ringed_planet=🪐|ringing_bell=🕭|roasted_sweet_potato=🍠|robot=🤖|robot_face=🤖|rock=🪨|rocket=🚀|rofl=🤣|roll_of_paper=🧻|rolled_up_newspaper=🗞|roller_coaster=🎢|roller_skate=🛼|rolling_eyes=🙄|rolling_on_the_floor_laughing=🤣|rooster=🐓|rose=🌹|rosette=🏵|round_pushpin=📍|rowboat=🚣|rugby_football=🏉|runner=🏃|running_shirt_with_sash=🎽|safety_pin=🧷|safety_vest=🦺|sagittarius=♐|sailboat=⛵|sake_bottle_and_cup=🍶|salt_shaker=🧂|salty=🧂|salute=🫡|saluting=🫡|saluting_face=🫡|sandwich=🥪|sari=🥻|satellite=🛰|satellite_antenna=📡|sauropod=🦕|savouring_delicious_food=😋|saxophone=🎷|scales=⚖️|scarf=🧣|school=🏫|school_satchel=🎒|scissors=✂️|scooter=🛴|scorpion=🦂|scorpius=♏|scream=😱|screaming_in_fear=😱|screen=🖵|screwdriver=🪛|scroll=📜|seal=🦭|seat=💺|second_place_medal=🥈|see_no_evil=🙈|see_no_evil_monkey=🙈|seedling=🌱|selfie=🤳|serious_face_with_symbols_covering_mouth=🤬|sewing_needle=🪡|shaking=🫨|shaking_face=🫨|shallow_pan_of_food=🥘|shamrock=☘️|shark=🦈|shaved_ice=🍧|sheep=🐑|shield=🛡️|shinto_shrine=⛩️|ship=🚢|shocked_face_with_exploding_head=🤯|shooting_star=🌠|shopping_bags=🛍|shopping_trolley=🛒|shortcake=🍰|shorts=🩳|shower=🚿|shrimp=🦐|shrug=🤷|shush=🤫|sick=🤢|sideways_black_down_pointing_index=🖡|sideways_black_left_pointing_index=🖚|sideways_black_right_pointing_index=🖛|sideways_black_up_pointing_index=🖠|sideways_white_down_pointing_index=🖟|sideways_white_left_pointing_index=🖘|sideways_white_right_pointing_index=🖙|sideways_white_up_pointing_index=🖞|sign_of_the_horns=🤘|silhouette_of_japan=🗾|six_pointed_star_with_middle_dot=🔯|skateboard=🛹|ski_and_ski_boot=🎿|skier=⛷️|skull=💀|skull_and_crossbones=☠️|skull_crossbones=☠️|skull_emoji=💀|skunk=🦨|sled=🛷|sleeping=😴|sleeping_accommodation=🛌|sleeping_face=😴|sleeping_symbol=💤|sleepy=😪|sleepy_face=😪|sleuth_or_spy=🕵|slice_of_pizza=🍕|slight_frown=🙁|slightly_frowning=🙁|slightly_frowning_face=🙁|slightly_smiling=🙂|slightly_smiling_face=🙂|slot_machine=🎰|sloth=🦥|small_airplane=🛩|small_blue_diamond=🔹|small_orange_diamond=🔸|small_square=▪️|smile=😄|smiley=😃|smiling_cat_face_with_heart_shaped_eyes=😻|smiling_cat_face_with_open_mouth=😺|smiling_eyes=😊|smiling_eyes_and_hand_covering_mouth=🤭|smiling_eyes_and_three_hearts=🥰|smiling_face=☺️|smiling_face_with_halo=😇|smiling_face_with_heart_shaped_eyes=😍|smiling_face_with_horns=😈|smiling_face_with_open_mouth=😃|smiling_face_with_open_mouth_and_cold_sweat=😅|smiling_face_with_open_mouth_and_smiling_eyes=😄|smiling_face_with_open_mouth_and_tightly_closed_eyes=😆|smiling_face_with_smiling_eyes=😊|smiling_face_with_smiling_eyes_and_hand_covering_mouth=🤭|smiling_face_with_smiling_eyes_and_three_hearts=🥰|smiling_face_with_sunglasses=😎|smiling_face_with_tear=🥲|smiling_imp=😈|smirk=😏|smirking=😏|smirking_face=😏|smoking=🚬|smoking_symbol=🚬|snail=🐌|snake=🐍|sneeze=🤧|sneezing=🤧|sneezing_face=🤧|snow_capped_mountain=🏔|snowboarder=🏂|snowflake=❄️|snowman=⛄|snowman_without_snow=⛄|sob=😭|soccer_ball=⚽|socks=🧦|soft_ice_cream=🍦|soft_shell_floppy_disk=🖬|softball=🥎|soon_with_rightwards_arrow_above=🔜|sos=🆘|south_east_arrow=↘️|south_west_arrow=↙️|spade_suit=♠️|spaghetti=🍝|sparkle=❇️|sparkles=✨|sparkling_heart=💖|speak_no_evil=🙊|speak_no_evil_monkey=🙊|speaker=🔈|speaker_with_cancellation_stroke=🔇|speaker_with_one_sound_wave=🔉|speaker_with_three_sound_waves=🔊|speaking_head_in_silhouette=🗣|speech_balloon=💬|speedboat=🚤|spider=🕷|spider_web=🕸|spiral_calendar_pad=🗓|spiral_note_pad=🗒|spiral_shell=🐚|splashing_sweat=💦|splashing_sweat_symbol=💦|sponge=🧽|spool_of_thread=🧵|spoon=🥄|sports_medal=🏅|spouting_whale=🐳|square_button=🔲|square_for_stop=⏹️|squared_cjk_unified_ideograph_5272=🈹|squared_cjk_unified_ideograph_5408=🈴|squared_cjk_unified_ideograph_55b6=🈺|squared_cjk_unified_ideograph_6307=🈯|squared_cjk_unified_ideograph_6708=🈷|squared_cjk_unified_ideograph_6709=🈶|squared_cjk_unified_ideograph_6e80=🈵|squared_cjk_unified_ideograph_7121=🈚|squared_cjk_unified_ideograph_7533=🈸|squared_cjk_unified_ideograph_7981=🈲|squared_cjk_unified_ideograph_7a7a=🈳|squared_cl=🆑|squared_cool=🆒|squared_free=🆓|squared_id=🆔|squared_katakana_koko=🈁|squared_katakana_sa=🈂|squared_new=🆕|squared_ng=🆖|squared_ok=🆗|squared_sos=🆘|squared_up_with_exclamation_mark=🆙|squared_vs=🆚|squid=🦑|stadium=🏟|staff_of_aesculapius=⚕️|stamped_envelope=🖃|standing_person=🧍|star=⭐|star_and_crescent=☪️|star_of_david=✡️|star_struck=🤩|station=🚉|statue_of_liberty=🗽|steam_locomotive=🚂|steaming_bowl=🍜|stethoscope=🩺|stock_chart=🗠|stop=🛑|stopwatch=⏱️|straight_ruler=📏|strawberry=🍓|stuck_out_tongue=😛|stuck_out_tongue_and_tightly_closed_eyes=😝|stuck_out_tongue_and_winking_eye=😜|stuck_out_tongue_winking_eye=😜|studio_microphone=🎙|stuffed_flatbread=🥙|stupa=🛓|sun=☀️|sun_behind_cloud=⛅|sun_behind_cloud_with_rain=🌦|sun_with=🌞|sun_with_face=🌞|sun_with_rays=☀️|sun_with_small_cloud=🌤|sunflower=🌻|sunglasses=😎|sunrise=🌅|sunrise_over_mountains=🌄|sunset_over_buildings=🌇|superhero=🦸|supervillain=🦹|surfer=🏄|sus=🤨|sushi=🍣|suspension_railway=🚟|swan=🦢|sweat=😓|sweat_drops=💦|sweat_smile=😅|sweating=😅|swimmer=🏊|sword=🗡️|swords=⚔️|symbol_for_marks_chapter=🕅|synagogue=🕍|syringe=💉|t_rex=🦖|t_shirt=👕|table_tennis_paddle_and_ball=🏓|taco=🌮|tada=🎉|takeout_box=🥡|tamale=🫔|tanabata_tree=🎋|tangerine=🍊|tape_cartridge=🖭|target=🎯|taurus=♉|taxi=🚕|teacup_without_handle=🍵|teapot=🫖|tear=🥲|tear_off_calendar=📆|tears_of_joy=😂|teddy_bear=🧸|telephone=☎️|telephone_on_top_of_modem=🖀|telephone_receiver=📞|telephone_receiver_with_page=🕼|telescope=🔭|television=📺|tennis_racquet_and_ball=🎾|tent=⛺|test_tube=🧪|thermometer=🌡|thinking=🤔|thinking_face=🤔|third_place_medal=🥉|thong_sandal=🩴|thought_balloon=💭|three_button_mouse=🖱|three_networked_computers=🖧|three_rays_above=🗤|three_rays_below=🗥|three_rays_left=🗦|three_rays_right=🗧|three_speech_bubbles=🗫|throwing_a_kiss=😘|thumbs_down=👎|thumbs_down_sign=👎|thumbs_up=👍|thumbs_up_sign=👍|thumbsdown=👎|thumbsup=👍|thunder_cloud_and_rain=⛈️|ticket=🎫|tiger=🐯|tiger_face=🐯|timer_clock=⏲️|tired=😫|tired_face=😫|toilet=🚽|tokyo_tower=🗼|tomato=🍅|tongue=👅|toolbox=🧰|tooth=🦷|toothbrush=🪥|top_hat=🎩|top_with_upwards_arrow_above=🔝|tornado=🌪️|touchtone_telephone=🕾|tr=🇹🇷|trackball=🖲|tractor=🚜|trade_mark=™️|trade_mark_sign=™️|train=🚆|tram=🚊|tram_car=🚋|triangle_with_rounded_corners=🛆|triangular_flag_on_post=🚩|triangular_ruler=📐|trident_emblem=🔱|triumph=😤|troll=🧌|trolleybus=🚎|trophy=🏆|tropical_drink=🍹|tropical_fish=🐠|trumpet=🎺|tulip=🌷|tumbler_glass=🥃|turkey=🦃|turkiye=🇹🇷|turned_ok_hand=🖏|turned_ok_hand_sign=🖏|turtle=🐢|twisted_rightwards_arrows=🔀|two_button_mouse=🖰|two_hearts=💕|two_men_holding_hands=👬|two_speech_bubbles=🗪|two_women_holding_hands=👭|ufo=🛸|umbrella=☂️|umbrella_on_ground=⛱️|umbrella_with_rain_drops=☔|unamused=😒|unamused_face=😒|uneven_eyes_and_wavy_mouth=🥴|unicorn=🦄|unicorn_face=🦄|universal_recycling_symbol=♻️|up=🆙|up_down_arrow=↕️|up_pointing_airplane=🛧|up_pointing_backhand_index=👆|up_pointing_double_triangle=⏫|up_pointing_index=☝️|up_pointing_military_airplane=🛦|up_pointing_red_triangle=🔺|up_pointing_small_airplane=🛨|up_pointing_small_red_triangle=🔼|up_with_exclamation_mark=🆙|upper_right_shadowed_white_circle=🔿|upside_down=🙃|upside_down_face=🙃|upwards_black_arrow=⬆️|v=✌️|vampire=🧛|vertical_traffic_light=🚦|vibration_mode=📳|victory_hand=✌️|video_camera=📹|video_game=🎮|videocassette=📼|violin=🎻|virgo=♍|volcano=🌋|volleyball=🏐|vomit=🤮|waffle=🧇|waning_crescent_moon=🌘|waning_crescent_moon_symbol=🌘|waning_gibbous_moon=🌖|waning_gibbous_moon_symbol=🌖|warning=⚠️|warning_sign=⚠️|wastebasket=🗑|watch=⌚|water=💧|water_buffalo=🐃|water_closet=🚾|water_polo=🤽|water_wave=🌊|watermelon=🍉|wave=👋|wave_water=🌊|waving_black_flag=🏴|waving_hand=👋|waving_hand_sign=👋|waving_white_flag=🏳|wavy_dash=〰️|waxing_crescent_moon=🌒|waxing_crescent_moon_symbol=🌒|waxing_gibbous_moon=🌔|waxing_gibbous_moon_symbol=🌔|weary=😩|weary_cat=🙀|weary_cat_face=🙀|weary_face=😩|wedding=💒|weight_lifter=🏋|whale=🐳|wheel=🛞|wheel_of_dharma=☸️|wheelchair=♿|wheelchair_symbol=♿|white_check_mark=✅|white_circle=⚪|white_down_pointing_backhand_index=👇|white_down_pointing_left_hand_index=🖗|white_exclamation_mark_ornament=❕|white_flower=💮|white_frowning=☹️|white_frowning_face=☹️|white_hard_shell_floppy_disk=🖫|white_heart=🤍|white_heavy_check_mark=✅|white_large_square=⬜|white_latin_cross=🕆|white_left_pointing_backhand_index=👈|white_medium_small_square=◽|white_medium_square=◻️|white_medium_star=⭐|white_pennant=🏱|white_question_mark_ornament=❔|white_right_pointing_backhand_index=👉|white_small_square=▫️|white_smiling=☺️|white_smiling_face=☺️|white_square_button=🔳|white_sun=🌣|white_sun_behind_cloud=🌥|white_sun_behind_cloud_with_rain=🌦|white_sun_with_small_cloud=🌤|white_touchtone_telephone=🕾|white_up_pointing_backhand_index=👆|white_up_pointing_index=☝️|wilted_flower=🥀|wind_blowing=🌬|wind_blowing_face=🌬|wind_chime=🎐|window=🪟|wine_glass=🍷|wing=🪽|wink=😉|winking=😉|winking_face=😉|wired_keyboard=🖮|wireless=🛜|with_cold_sweat=😓|with_cowboy_hat=🤠|with_diagonal_mouth=🫤|with_finger_covering_closed_lips=🤫|with_head_bandage=🤕|with_look_of_triumph=😤|with_medical_mask=😷|with_monocle=🧐|with_no_good_gesture=🙅|with_ok_gesture=🙆|with_one_eyebrow_raised=🤨|with_open_eyes_and_hand_over_mouth=🫢|with_open_mouth=😮|with_open_mouth_and_cold_sweat=😰|with_open_mouth_vomiting=🤮|with_party_horn_and_party_hat=🥳|with_peeking_eye=🫣|with_pleading_eyes=🥺|with_rolling_eyes=🙄|with_stuck_out_tongue=😛|with_stuck_out_tongue_and_tightly_closed_eyes=😝|with_stuck_out_tongue_and_winking_eye=😜|with_tears_of_joy=😂|with_thermometer=🤒|with_uneven_eyes_and_wavy_mouth=🥴|without_mouth=😶|wolf=🐺|wolf_face=🐺|woman=👩|woman_with_bunny_ears=👯|womans_boots=👢|womans_clothes=👚|womans_hat=👒|womans_sandal=👡|womens=🚺|womens_symbol=🚺|wood=🪵|world_map=🗺|worm=🪱|worried=😟|worried_face=😟|wow=😮|wrapped_present=🎁|wrench=🔧|wrestlers=🤼|writing_hand=✍️|x=❌|x_ray=🩻|yawning=🥱|yawning_face=🥱|yellow_circle=🟡|yellow_heart=💛|yes=✅|yin_yang=☯️|yo_yo=🪀|yum=😋|zany=🤪|zap=⚡|zebra=🦓|zebra_face=🦓|zipper_mouth=🤐|zipper_mouth_face=🤐|zombie=🧟";
   var EMOJI = null;
   var EMOJI_NAMES = [];
@@ -1473,7 +1535,6 @@
     }
   }
 
-  // ":sob:" (her yerde) ve ":sob" (kelime sonunda / mesaj sonunda) → 😭. Büyük/küçük harf fark etmez.
   function convertEmoji(text) {
     emojiInit();
     text = text.replace(/:([A-Za-z0-9_+\-]{1,40}):/g, function (all, n) {
@@ -1489,7 +1550,7 @@
   function safeSlice(s, n) {
     if (s.length <= n) return s;
     var c = s.charCodeAt(n - 1);
-    if (c >= 0xd800 && c <= 0xdbff) n--; // emojiyi ortadan bölme
+    if (c >= 0xd800 && c <= 0xdbff) n--;
     return s.slice(0, n);
   }
 
@@ -1607,9 +1668,9 @@
     el.className = "fbc-msg " + (m.from === "host" ? "fbc-fire" : "fbc-water");
     var nm = document.createElement("span");
     nm.className = "fbc-name";
-    nm.textContent = (m.from === "host" ? "Ateş" : "Su") + ": ";
+    nm.textContent = (m.from === "host" ? t("chatFireName") : t("chatWaterName")) + ": ";
     var tx = document.createElement("span");
-    tx.textContent = m.text; // textContent: karşı taraftan gelen metin asla HTML sayılmaz
+    tx.textContent = m.text;
     el.appendChild(nm);
     el.appendChild(tx);
     return el;
@@ -1669,7 +1730,6 @@
     if (!chatEl) return;
     chatOpen = true;
     try {
-      // Sohbet kutusu tuşları yuttuğu için, basılı tuş "takılı" kalmasın
       var gk = getGame();
       if (gk && gk.input && gk.input.keyboard && gk.input.keyboard.reset) gk.input.keyboard.reset(false);
     } catch (e) {}
@@ -1719,7 +1779,7 @@
     chatInputEl.maxLength = 200;
     chatInputEl.autocomplete = "off";
     chatInputEl.spellcheck = false;
-    chatInputEl.placeholder = "Mesaj yaz...";
+    chatInputEl.placeholder = t("chatPlaceholder");
     chatBarEl.appendChild(sugEl);
     chatBarEl.appendChild(chatInputEl);
 
@@ -1727,7 +1787,6 @@
     chatEl.appendChild(chatBarEl);
     document.body.appendChild(chatEl);
 
-    // Yazarken: ":isim:" veya ":isim " yazılınca anında emojiye çevir, öneri kutusunu güncelle
     chatInputEl.addEventListener("input", function () {
       var v = chatInputEl.value;
       var pos = chatInputEl.selectionStart;
@@ -1753,7 +1812,7 @@
       chatInputEl.addEventListener(ev, function (e) {
         e.stopPropagation();
         if (ev !== "keydown") return;
-        if (e.key === "Tab") e.preventDefault(); // odak sohbet kutusundan çıkmasın
+        if (e.key === "Tab") e.preventDefault();
         if (sugItems.length) {
           if (e.key === "ArrowDown") { sugIndex = (sugIndex + 1) % sugItems.length; renderSuggest(); e.preventDefault(); return; }
           if (e.key === "ArrowUp") { sugIndex = (sugIndex + sugItems.length - 1) % sugItems.length; renderSuggest(); e.preventDefault(); return; }
@@ -1765,7 +1824,6 @@
       });
     });
 
-    // Eski mesajlar zamanla yumuşakça kaybolsun
     setInterval(function () {
       if (chatEl && chatEl.style.display !== "none" && !chatOpen) renderChat();
     }, 300);
@@ -1787,7 +1845,16 @@
     } catch (e) {}
   }
 
-  /* ---------------- Menü arayüzü ---------------- */
+  var ICONS = {
+    fire: [
+      "M12 2C12 2 8 6 8 11c0 2.2 1.8 4 4 4s4-1.8 4-4c0-1.6-1-2.6-1-2.6s.4 2.4-1.6 3.2c0 0 .2-3-1.4-5-1.4 1.6-2 3.4-2 4.4z",
+      "#ff9a3c"
+    ],
+    water: [
+      "M12 2C12 2 5 10 5 14.5c0 3.9 3.1 7 7 7s7-3.1 7-7C19 10 12 2 12 2z",
+      "#3ec6ff"
+    ]
+  };
 
   function iconSvg(kind, size, color) {
     var c = color || ICONS[kind][1];
@@ -1799,7 +1866,6 @@
     if (document.getElementById("onl-style")) return;
     var st = document.createElement("style");
     st.id = "onl-style";
-    // Not: backdrop-filter (blur) bilerek yok; oyunun üstünde zayıf ekran kartlarını yorar.
     st.textContent = [
       ".onl-wrap{position:fixed;left:0;top:0;right:0;bottom:0;z-index:99999;display:none;background:rgba(4,6,14,.62);",
       "  font:14px 'Segoe UI','Segoe UI Emoji','Apple Color Emoji','Noto Color Emoji',system-ui,sans-serif;color:#e9edff;}",
@@ -1870,12 +1936,15 @@
       ".onl-foot{margin-top:10px;text-align:center;font-size:11px;color:rgba(233,237,255,.38);line-height:1.5;}",
       ".onl-foot kbd{font:inherit;font-weight:700;color:rgba(233,237,255,.62);padding:1px 6px;border-radius:5px;",
       "  background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.1);}",
+      ".onl-select{-webkit-appearance:none;appearance:none;background-color:rgba(255,255,255,.06);",
+      "  background-image:linear-gradient(45deg,transparent 50%,rgba(255,255,255,.7) 50%),linear-gradient(135deg,rgba(255,255,255,.7) 50%,transparent 50%);",
+      "  background-position:calc(100% - 16px) 50%,calc(100% - 11px) 50%;background-size:5px 5px,5px 5px;background-repeat:no-repeat;}",
+      ".onl-select option{background:#1a1f36;color:#fff;}",
       "@keyframes onlPop{from{opacity:0;transform:translate(-50%,-48%) scale(.96);}to{opacity:1;transform:translate(-50%,-50%);}}"
     ].join("\n");
     document.head.appendChild(st);
   }
 
-  // Menüdeki bağlantı rozetini güncelle (bağlı değil / bekleniyor / 2 oyuncu hazır)
   function updatePanelState() {
     if (!panelEl) return;
     var el = panelEl.querySelector("#onl-state");
@@ -1883,13 +1952,13 @@
     var cls = "onl-chip";
     var txt;
     if (!connected) {
-      txt = sock ? "Bağlanıyor…" : "Bağlı değil";
+      txt = sock ? t("stateConnecting") : t("stateNoConn");
       if (sock) cls += " wait";
     } else if (!peerHere) {
-      txt = (role === "host" ? "Hazır" : "Bağlandı") + " · arkadaş bekleniyor";
+      txt = role === "host" ? t("stateHostReady") : t("stateGuestReady");
       cls += " wait";
     } else {
-      txt = (role === "host" ? "Ateş" : "Su") + " · iki oyuncu hazır";
+      txt = role === "host" ? t("stateHostBoth") : t("stateGuestBoth");
       cls += " on";
     }
     el.textContent = txt;
@@ -1901,65 +1970,139 @@
     statusEl.style.cssText =
       "position:fixed;left:8px;bottom:8px;z-index:99998;font:12px sans-serif;color:#fff;" +
       "background:rgba(0,0,0,.55);padding:3px 8px;border-radius:4px;pointer-events:none";
-    statusEl.textContent = "Online mod " + VERSION + " yüklendi - F9: menü";
+    statusEl.textContent = t("statusLoaded", VERSION);
     document.body.appendChild(statusEl);
 
     injectMenuStyle();
     panelEl = document.createElement("div");
     panelEl.className = "onl-wrap";
     panelEl.style.display = "none";
+    document.body.appendChild(panelEl);
+
+    panelEl.addEventListener("mousedown", function (e) {
+      if (e.target === panelEl) panelEl.style.display = "none";
+    });
+
+    buildChatUI();
+
+    // Global klavye kısayolları (sadece bir kere kurulur)
+    window.addEventListener(
+      "keydown",
+      function (e) {
+        if (e.key === "Escape" && panelEl.style.display !== "none") {
+          panelEl.style.display = "none";
+          e.preventDefault();
+        }
+        if (e.key === "F9" || (e.key === "Tab" && !chatOpen)) {
+          panelEl.style.display = panelEl.style.display === "none" ? "block" : "none";
+          updatePanelState();
+          e.preventDefault();
+        }
+        if (e.key === "Enter" && connected && peerHere && !chatOpen && panelEl.style.display === "none") {
+          openChat();
+          e.preventDefault();
+        }
+        if (e.key === "F7") {
+          if (!logPath) {
+            initLog();
+            say(t("mRecStarted", logPath || t("mNoFile")));
+          }
+          log("=== F7 ISARETI: bug simdi gorüldü === " + describeNow());
+          flushLog();
+          say(t("mF7Mark", logPath));
+          e.preventDefault();
+        }
+        if (e.key === "F8" && role === "guest" && attached) {
+          forceSnapUntil = Date.now() + 400;
+          send({ t: "rs" });
+          say(t("mForcing"));
+          e.preventDefault();
+        }
+        if (e.key === "F6") {
+          if (!logPath) initLog();
+          dumpLevelStructure();
+          e.preventDefault();
+        }
+        if (role === "guest" && attached && peerHere && !chatOpen && !e.repeat) {
+          var typing = e.target && (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA");
+          if (!typing && (e.code === "KeyW" || e.code === "ArrowUp")) {
+            send({ t: "ev", ev: "jump" });
+          }
+        }
+      },
+      true
+    );
+
+    populateMenu();
+    updatePanelState();
+  }
+
+  // Menü içeriğini dile göre kur. Dil değişince tekrar çağrılır.
+  function populateMenu() {
+    while (panelEl.firstChild) panelEl.removeChild(panelEl.firstChild);
+
     panelEl.innerHTML =
       "<div class='onl-card'>" +
         "<div class='onl-head'>" +
           "<div class='onl-logo'>" + iconSvg("fire", 20) + iconSvg("water", 20) + "</div>" +
-          "<div class='onl-title'><div class='onl-t1'>Ateş ve Su</div><div class='onl-t2'>Online mod · " + VERSION + "</div></div>" +
-          "<button class='onl-x' id='onl-close' title='Kapat (F9)'>✕</button>" +
+          "<div class='onl-title'><div class='onl-t1'>" + t("menuTitle") + "</div>" +
+          "<div class='onl-t2'>" + t("menuSub", VERSION) + "</div></div>" +
+          "<button class='onl-x' id='onl-close' title='" + t("closeTitle") + "'>✕</button>" +
         "</div>" +
-        "<div class='onl-chip'><b></b><span id='onl-state'>Bağlı değil</span></div>" +
+        "<div class='onl-chip'><b></b><span id='onl-state'></span></div>" +
 
-        "<div class='onl-sec'>Bağlantı</div>" +
-        "<label class='onl-lbl' for='onl-addr'>Sunucu adresi (aynı ağdaki bilgisayarın IP:port'u)</label>" +
+        "<div class='onl-sec'>" + t("secConn") + "</div>" +
+        "<label class='onl-lbl' for='onl-addr'>" + t("lblAddr") + "</label>" +
         "<input id='onl-addr' class='onl-in' placeholder='127.0.0.1:7777' spellcheck='false' autocomplete='off'>" +
         "<div class='onl-btns'>" +
-          "<button class='onl-btn onl-fire' id='onl-host'>" + iconSvg("fire", 22, "#fff") + "<span>Başlat<small>Ateş olarak</small></span></button>" +
-          "<button class='onl-btn onl-water' id='onl-join'>" + iconSvg("water", 22, "#fff") + "<span>Bağlan<small>Su olarak</small></span></button>" +
+          "<button class='onl-btn onl-fire' id='onl-host'>" + iconSvg("fire", 22, "#fff") +
+            "<span>" + t("btnStart") + "<small>" + t("btnStartSub") + "</small></span></button>" +
+          "<button class='onl-btn onl-water' id='onl-join'>" + iconSvg("water", 22, "#fff") +
+            "<span>" + t("btnJoin") + "<small>" + t("btnJoinSub") + "</small></span></button>" +
         "</div>" +
 
-        "<div class='onl-sec'>Ayarlar</div>" +
-        "<label class='onl-row'><div class='onl-rtxt'><div class='onl-rt'>İki tuş takımı</div>" +
-          "<div class='onl-rd'>Ok tuşları ve W A D birlikte çalışır</div></div>" +
+        "<div class='onl-sec'>" + t("secSet") + "</div>" +
+        "<label class='onl-row'><div class='onl-rtxt'><div class='onl-rt'>" + t("setAlt") + "</div>" +
+          "<div class='onl-rd'>" + t("setAltDesc") + "</div></div>" +
           "<span class='onl-sw'><input type='checkbox' id='onl-alt'><i></i></span></label>" +
-        "<label class='onl-row'><div class='onl-rtxt'><div class='onl-rt'>Gecikme telafisi</div>" +
-          "<div class='onl-rd'>Su oyuncusu için, zıplama senkronunu düzeltir</div></div>" +
+        "<label class='onl-row'><div class='onl-rtxt'><div class='onl-rt'>" + t("setComp") + "</div>" +
+          "<div class='onl-rd'>" + t("setCompDesc") + "</div></div>" +
           "<span class='onl-sw'><input type='checkbox' id='onl-comp'><i></i></span></label>" +
-        "<label class='onl-row'><div class='onl-rtxt'><div class='onl-rt'>Otomatik yeniden bağlan</div>" +
-          "<div class='onl-rd'>Bağlantı kopunca kendiliğinden tekrar dener</div></div>" +
+        "<label class='onl-row'><div class='onl-rtxt'><div class='onl-rt'>" + t("setAuto") + "</div>" +
+          "<div class='onl-rd'>" + t("setAutoDesc") + "</div></div>" +
           "<span class='onl-sw'><input type='checkbox' id='onl-auto'><i></i></span></label>" +
-        "<div class='onl-sliderbox'><div class='onl-slhead'><div><div class='onl-rt'>Upload sınırı</div>" +
-          "<div class='onl-rd'>Discord/internet kasıyorsa düşür</div></div><div class='onl-val' id='onl-capv'></div></div>" +
+        "<div class='onl-sliderbox'><div class='onl-slhead'><div><div class='onl-rt'>" + t("setCap") + "</div>" +
+          "<div class='onl-rd'>" + t("setCapDesc") + "</div></div><div class='onl-val' id='onl-capv'></div></div>" +
           "<input type='range' id='onl-cap' class='onl-range' min='20' max='320' step='10'></div>" +
 
-        "<button class='onl-btn onl-ghost' id='onl-off'>Bağlantıyı kes</button>" +
-        "<div class='onl-foot'><kbd>F9</kbd> / <kbd>Tab</kbd> menü &nbsp;·&nbsp; <kbd>F8</kbd> zorla eşitle (Su) &nbsp;·&nbsp; <kbd>F7</kbd> kayıt işareti</div>" +
+        // ---- Dil seçici ----
+        "<div class='onl-row' style='cursor:default;'><div class='onl-rtxt'><div class='onl-rt'>" + t("setLang") + "</div>" +
+          "<div class='onl-rd'>" + t("setLangDesc") + "</div></div>" +
+          "<select id='onl-lang' class='onl-in onl-select' style='width:120px;height:36px;flex:none;padding:0 26px 0 10px;cursor:pointer;'>" +
+            "<option value='tr'>Türkçe</option>" +
+            "<option value='en'>English</option>" +
+          "</select></div>" +
+
+        "<button class='onl-btn onl-ghost' id='onl-off'>" + t("btnDisconnect") + "</button>" +
+        "<div class='onl-foot'>" + t("footText") + "</div>" +
       "</div>";
-    document.body.appendChild(panelEl);
-    panelEl.addEventListener("mousedown", function (e) {
-      if (e.target === panelEl) panelEl.style.display = "none"; // boşluğa tıklayınca kapat
-    });
+
     panelEl.querySelector("#onl-close").onclick = function () {
       panelEl.style.display = "none";
     };
-    updatePanelState();
-
-    buildChatUI();
 
     var addr = panelEl.querySelector("#onl-addr");
     addr.value = loadSaved("addr", DEFAULT_SERVER);
+
     var altBox = panelEl.querySelector("#onl-alt");
-    altKeysOn = loadSaved("alt", "1") !== "0";
     altBox.checked = altKeysOn;
+    altBox.onchange = function () {
+      altKeysOn = altBox.checked;
+      save("alt", altKeysOn ? "1" : "0");
+      altBox.blur();
+    };
+
     var compBox = panelEl.querySelector("#onl-comp");
-    compOn = loadSaved("comp", "1") !== "0";
     compBox.checked = compOn;
     compBox.onchange = function () {
       compOn = compBox.checked;
@@ -1967,14 +2110,8 @@
       delayMs = compOn && rtt ? Math.min(80, rtt / 2 + 6) : 0;
       compBox.blur();
     };
-    altBox.onchange = function () {
-      altKeysOn = altBox.checked;
-      save("alt", altKeysOn ? "1" : "0");
-      altBox.blur();
-    };
 
     var autoBox = panelEl.querySelector("#onl-auto");
-    autoReconnect = loadSaved("auto", "0") !== "0";
     autoBox.checked = autoReconnect;
     autoBox.onchange = function () {
       autoReconnect = autoBox.checked;
@@ -1982,18 +2119,14 @@
       autoBox.blur();
     };
 
-    // Upload sınırı kaydırıcısı: en sağ uç (320) = sınırsız (capKBs = 0)
     var capBox = panelEl.querySelector("#onl-cap");
     var capVal = panelEl.querySelector("#onl-capv");
     function showCap() {
       var v = parseInt(capBox.value, 10) || 100;
-      capVal.textContent = v >= 320 ? "Sınırsız" : v + " KB/s";
+      capVal.textContent = v >= 320 ? t("capUnlimited") : v + t("capUnit");
       capBox.style.setProperty("--p", ((v - 20) / 300) * 100 + "%");
     }
-    capKBs = parseInt(loadSaved("cap", "100"), 10);
-    if (isNaN(capKBs) || capKBs < 0) capKBs = 100;
-    capBox.value = String(capKBs === 0 ? 320 : Math.max(20, Math.min(capKBs, 310)));
-    capKBs = parseInt(capBox.value, 10) >= 320 ? 0 : parseInt(capBox.value, 10);
+    capBox.value = String(capKBs === 0 ? 320 : Math.max(20, Math.min(capKBs || 100, 310)));
     showCap();
     capBox.oninput = showCap;
     capBox.onchange = function () {
@@ -2003,7 +2136,17 @@
       capBox.blur();
     };
 
-    // Yazı yazarken oyun tuşları tetiklenmesin
+    // ---- Dil seçici ----
+    var langBox = panelEl.querySelector("#onl-lang");
+    langBox.value = LANG;
+    langBox.onchange = function () {
+      LANG = langBox.value === "en" ? "en" : "tr";
+      save("lang", LANG);
+      populateMenu();          // menüyü yeni dilde yeniden kur
+      updatePanelState();
+      if (chatInputEl) chatInputEl.placeholder = t("chatPlaceholder");
+    };
+
     [addr, capBox].forEach(function (el) {
       ["keydown", "keyup", "keypress"].forEach(function (ev) {
         el.addEventListener(ev, function (e) {
@@ -2025,57 +2168,9 @@
       go("join");
     };
     panelEl.querySelector("#onl-off").onclick = function () {
-      disconnect("bağlantı kesildi");
+      disconnect(MANUAL_REASON, true);
       panelEl.style.display = "none";
     };
-
-    window.addEventListener(
-      "keydown",
-      function (e) {
-        if (e.key === "Escape" && panelEl.style.display !== "none") {
-          panelEl.style.display = "none"; // Esc menüyü kapatır
-          e.preventDefault();
-        }
-        if (e.key === "F9" || (e.key === "Tab" && !chatOpen)) {
-          panelEl.style.display = panelEl.style.display === "none" ? "block" : "none";
-          updatePanelState();
-          e.preventDefault();
-        }
-        if (e.key === "Enter" && connected && peerHere && !chatOpen && panelEl.style.display === "none") {
-          openChat();
-          e.preventDefault();
-        }
-        if (e.key === "F7") {
-          if (!logPath) {
-            initLog();
-            say("kayıt başlatıldı: " + (logPath || "dosya oluşturulamadı"));
-          }
-          log("=== F7 ISARETI: bug simdi gorüldü === " + describeNow());
-          flushLog();
-          say("işaret kaydedildi (F7) → " + logPath);
-          e.preventDefault();
-        }
-        if (e.key === "F8" && role === "guest" && attached) {
-          forceSnapUntil = Date.now() + 400;
-          send({ t: "rs" }); // host: tüm sabit nesneleri de yeniden yolla
-          say("zorla eşitleniyor");
-          e.preventDefault();
-        }
-        if (e.key === "F6") {
-          if (!logPath) initLog(); // döküm dosyaya yazılsın
-          dumpLevelStructure();
-          e.preventDefault();
-        }
-        // Guest: zıplama tuşuna basılınca anında host'a "jump" olayı gönder
-        if (role === "guest" && attached && peerHere && !chatOpen && !e.repeat) {
-          var typing = e.target && (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA");
-          if (!typing && (e.code === "KeyW" || e.code === "ArrowUp")) {
-            send({ t: "ev", ev: "jump" });
-          }
-        }
-      },
-      true
-    );
   }
 
   /* ---------------- Hızlı döngü (12 ms) ve ping ---------------- */
@@ -2113,7 +2208,6 @@
     buildUI();
     setInterval(flushLog, 2000);
     setInterval(checkLevel, 100);
-    // hostSendSnapshot ve fastTick: sadece bağlıyken çalışır (startGameIntervals/stopGameIntervals)
     setInterval(sendPing, 1000);
     setInterval(heartbeat, 2000);
     setInterval(refreshExtra, 500);
