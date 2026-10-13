@@ -1,4 +1,17 @@
-/* Ateş ve Su - Online Mod (prototip v0.9.5 - TR/EN dil desteği eklendi)
+/* Ateş ve Su - Online Mod (prototip v0.9.6 - DONMA DÜZELTMESİ, TR/EN dil desteği)
+ *
+ * v0.9.6: GUEST'TE "ÇOK RESTART SONRASI OYUN BAŞLAMADAN DONUYOR" HATASI.
+ *   Phaser'ın kare döngüsü (requestAnimationFrame) kare içinde bir hata fırlarsa kendini bir daha planlamaz: oyun kalıcı
+ *   donar ama bizim DOM menümüz (Tab) çalışmaya devam eder. Bu hata şuradan doğuyordu: guest, host'tan "go" alınca eski
+ *   bölümü öldürüp (killAll) geçiş yapıyordu; geçiş sürerken eski/ölü bölüm hâlâ güncelleniyor ve ölü Box2D gövdelerine
+ *   snapshot uygulanıyordu. Hızlı restartlarda üst üste gelen "go" mesajları da (geçiş sürerken) sessizce atılıyordu.
+ *   Düzeltmeler: (1) game.update hata yakalayıcıyla sarıldı: hata kaydedilir, döngü ölmez;
+ *   (2) bekçi: döngü 1.5 sn ilerlemezse otomatik yeniden başlatılır + kayıt dosyası kendiliğinden açılır;
+ *   (3) geçiş başlar başlamaz bölümle bağ koparılır (ölü gövdelere yazma/gönderme yok), geçiş bitmeden yeniden bağlanılmaz;
+ *   (4) geçiş sürerken gelen "go" artık atılmaz, sıraya alınır (en yenisi uygulanır);
+ *   (5) 12 sn'de başlamayan geçiş bir kez otomatik yeniden denenir; (6) restartlarda sızan ek tuş nesneleri önlendi;
+ *   (7) aynı Level nesnesi yeniden kullanılsa bile yeni karakterler görülünce yeniden bağlanılır.
+ *   Donma olursa F7'ye basın: fbwg-online-log.txt içinde "OYUN DÖNGÜSÜ HATASI" satırı asıl nedeni gösterir.
  *
  * Mantık (ana bilgisayar yöntemi):
  *  - HOST (oda açan) = Ateş, ok tuşlarıyla oynar. Fiziği o hesaplar.
@@ -16,7 +29,7 @@
 (function () {
   "use strict";
 
-  var VERSION = "v0.9.5";
+  var VERSION = "v0.9.6";
   var DEFAULT_SERVER = "127.0.0.1:7777";
   var SNAP_MS = 33; // 30Hz
   var FAST_MS = 12;
@@ -98,6 +111,7 @@
       mGoNoClass: "bölüm sınıfı bulunamadı",
       mGoIncoming: "arkadaşın {0} ekranına geçti, sen de geçiyorsun",
       mGoError: "geçiş hatası (konsola bak)",
+      mGoStuck: "bölüm yüklenemedi, menüden yeniden başlatın",
       mFriendDied: "arkadaşın öldü",
       mAttached: "seviyeye bağlandı ({0} nesne) - {1}",
       mAttachedHost: "Ateş: ok tuşları + W A D",
@@ -175,6 +189,7 @@
       mGoNoClass: "level class not found",
       mGoIncoming: "your friend switched to {0}, switching too",
       mGoError: "switch error (see console)",
+      mGoStuck: "level failed to load, restart it from the menu",
       mFriendDied: "your friend died",
       mAttached: "attached to level ({0} bodies) - {1}",
       mAttachedHost: "Fire: arrow keys + W A D",
@@ -264,6 +279,24 @@
   var logBytes = 0;
   var logWriting = false;
   var aliveSet = new Set();
+  var deadP1 = null; // kapanan bölümün karakterleri: bunlara yeniden bağlanma
+  var deadP2 = null;
+  var attWorld = null;
+  var attP1 = null;
+  var attP2 = null;
+  var pendingGo = null; // geçiş sürerken gelen "go": en yenisi beklemeye alınır
+  var lastGoAt = 0;
+  var MIN_GO_GAP_MS = 600;
+  var goWatch = null;
+  var attachRetryAt = 0;
+  var loopErrors = 0;
+  var lastLoopErr = "";
+  var lastLoopErrAt = 0;
+  var wdLastNow = -1;
+  var wdLastChange = Date.now();
+  var wdHeals = 0;
+  var lastBodyCount = -1;
+  var altKeyCache = {};
   var tmpVel = null;
   var lastKayma = 0;
   var lastStatusSig = "";
@@ -349,6 +382,10 @@
     if (attached && now - lastErrAt < 3000) {
       alert = true;
       warn += t("warnError", String(lastApplyError).slice(0, 80));
+    }
+    if (now - lastLoopErrAt < 3000) {
+      alert = true;
+      warn += t("warnError", String(lastLoopErr).slice(0, 80));
     }
     pingText = "";
     if (role === "guest" && rtt) {
@@ -507,6 +544,8 @@
     attached = false;
     role = null;
     buf = "";
+    pendingGo = null;
+    goWatch = null;
     clearChat();
     var msg = (reason === MANUAL_REASON) ? t("mConnManual") : (reason || t("mConnClosed"));
     if (autoReconnect && reconnectAddr && reconnectRole && !manual && reason !== MANUAL_REASON) {
@@ -686,6 +725,131 @@
       }
     }
     return out;
+  }
+
+  /* ---------------- Donma koruması (v0.9.6) ---------------- */
+
+  function describeTransition() {
+    try {
+      var g = getGame();
+      return (
+        "state=" + (g && g.state && g.state.current) + " fading=" + (g && g.state && g.state.fading) +
+        " level=" + (g && g.level ? "var" : "yok") + " attached=" + attached + " pendingGo=" + (pendingGo ? pendingGo.s : "-")
+      );
+    } catch (e) {
+      return "?";
+    }
+  }
+
+  // Phaser kare içinde hata fırlatılırsa requestAnimationFrame döngüsünü bir daha kurmaz. game.update'i sararak
+  // hatayı kaydediyor ve döngüyü hayatta tutuyoruz.
+  function guardLoop(g) {
+    if (g.__onlLoopGuard || typeof g.update !== "function") return;
+    g.__onlLoopGuard = true;
+    var ou = g.update;
+    g.update = function () {
+      try {
+        return ou.apply(this, arguments);
+      } catch (e) {
+        loopErrors++;
+        lastLoopErr = e && e.message ? e.message : String(e);
+        lastLoopErrAt = Date.now();
+        if (loopErrors === 1 && !logPath) initLog(); // ilk hatada kayıt dosyasını kendiliğinden aç (nadir olay)
+        if (loopErrors <= 25 || loopErrors % 300 === 0) {
+          log("OYUN DÖNGÜSÜ HATASI #" + loopErrors + " (döngü canlı tutuldu): " + (e && e.stack ? e.stack : e) + " | " + describeTransition());
+          if (loopErrors <= 3) flushLog();
+        }
+      }
+    };
+    log("döngü koruması takıldı");
+  }
+
+  // Bekçi: oyun saati 1.5 sn ilerlemiyorsa (döngü ölmüş) döngüyü yeniden başlat
+  function watchdog() {
+    var g = getGame();
+    var now = Date.now();
+    if (!g || !g.time || document.hidden) {
+      wdLastChange = now;
+      return;
+    }
+    var tn = g.time.now;
+    if (tn !== wdLastNow) {
+      wdLastNow = tn;
+      wdLastChange = now;
+      return;
+    }
+    if (now - wdLastChange < 1500) return;
+    wdLastChange = now; // en fazla 1.5 sn'de bir dene
+    wdHeals++;
+    if (!logPath) initLog();
+    log("DONMA TESPİT: oyun döngüsü 1.5 sn'dir ilerlemiyor, yeniden başlatılıyor (#" + wdHeals + ") " + describeTransition());
+    try {
+      if (g.raf && typeof g.raf.stop === "function" && typeof g.raf.start === "function") {
+        g.raf.stop();
+        g.raf.start();
+      }
+    } catch (e) {
+      log("döngü yeniden başlatılamadı: " + e);
+    }
+    flushLog();
+  }
+
+  // Bölümle bağı kes: geçiş başlarken eski/ölü bölümün gövdelerine ne yaz ne gönder
+  function detachLevel(why) {
+    try {
+      if (level && level.pers1) {
+        deadP1 = level.pers1;
+        deadP2 = level.pers2;
+      }
+    } catch (e) {}
+    if (attached) log("DETACH (" + why + ") " + describeTransition());
+    attached = false;
+    bodies = [];
+    alertSig = false;
+    lastSnapAt = 0;
+  }
+
+  function runPendingGo() {
+    if (!pendingGo) return;
+    var g = getGame();
+    if (!g || !g.state || g.state.fading) return;
+    if (Date.now() - lastGoAt < MIN_GO_GAP_MS) return;
+    var m = pendingGo;
+    pendingGo = null;
+    log("BEKLEYEN GO uygulanıyor: " + m.s);
+    applyGo(m);
+  }
+
+  // Başlamayan geçişi bir kez otomatik yeniden dene
+  function watchGo() {
+    if (!goWatch) return;
+    var g = getGame();
+    if (!g || !g.state) return;
+    var now = Date.now();
+    var done = goWatch.name === "level" ? attached && attP1 !== goWatch.p1 : g.state.current === goWatch.name && !g.state.fading;
+    if (done) {
+      goWatch = null;
+      return;
+    }
+    if (now - goWatch.at < 12000) return;
+    if (!logPath) initLog();
+    if (goWatch.retried) {
+      log("GEÇİŞ TAKILDI (yeniden denendi, olmadı): " + describeTransition());
+      flushLog();
+      say(t("mGoStuck"));
+      goWatch = null;
+      return;
+    }
+    log("GEÇİŞ TAKILDI: 12 sn'dir " + goWatch.name + " başlamadı; yeniden deneniyor. " + describeTransition());
+    flushLog();
+    try {
+      if (typeof g.state.fading === "boolean") g.state.fading = false;
+    } catch (e) {}
+    var m = goWatch.m;
+    m._onlRetry = true;
+    goWatch = null;
+    pendingGo = m;
+    lastGoAt = 0;
   }
 
   function heartbeat() {
@@ -926,6 +1090,7 @@
         if (SYNC_STATES[name] && !this.fading) {
           lastGo = { s: name, w: clearWorld ? 1 : 0, c: clearCache ? 1 : 0, p: cloneParams(params) };
           if (connected && peerHere) send({ t: "go", s: lastGo.s, w: lastGo.w, c: lastGo.c, p: lastGo.p });
+          if (attached) detachLevel("fade " + name); // eski bölüm ölürken ona snapshot gönderme/uygulama
         }
       } catch (e) {
         console.error("[ONLINE] go gönderme hatası", e);
@@ -940,8 +1105,16 @@
     if (!g || !g.state || !g.state.__onlOrigFade) return;
     var name = m.s;
     if (!SYNC_STATES[name]) return;
-    if (g.state.fading) return;
+    log("GO alındı: " + name + " " + describeTransition());
+    if (g.state.fading || Date.now() - lastGoAt < MIN_GO_GAP_MS) {
+      // Geçiş sürerken gelen "go" artık atılmıyor: sıraya alınır, en yenisi geçiş bitince uygulanır
+      pendingGo = m;
+      log("GO sıraya alındı (geçiş sürüyor): " + name);
+      return;
+    }
+    lastGoAt = Date.now();
     try {
+      detachLevel("go " + name);
       if (g.state.current === "level" && g.level) {
         try {
           if (g.level.sounds && g.level.sounds.levelMusic) g.level.sounds.levelMusic.stop();
@@ -979,6 +1152,7 @@
       }
 
       lastGo = { s: name, w: m.w ? 1 : 0, c: m.c ? 1 : 0, p: cloneParams(params) };
+      goWatch = { name: name, at: Date.now(), m: m, retried: !!m._onlRetry, p1: attP1 };
       say(t("mGoIncoming", name));
       log("GO uygulandı: " + name + " " + (params && params.filename ? params.filename : ""));
       g.state.__onlOrigFade.call(g.state, name, !!m.w, !!m.c, params);
@@ -1090,6 +1264,15 @@
     };
   }
 
+  // Her restartta yeni Key nesnesi eklemek sızıntı yapıyordu: tuş başına bir kez ekle
+  function altKey(kb, code) {
+    var c = altKeyCache[code];
+    if (c && c.kb === kb) return c.key;
+    var k = kb.addKey(code);
+    altKeyCache[code] = { kb: kb, key: k };
+    return k;
+  }
+
   function installAltKeys(g, lv) {
     var local = role === "host" ? lv.pers1 : lv.pers2;
     var c = local && local.cursors;
@@ -1098,9 +1281,9 @@
     try {
       var kb = g.input.keyboard;
       var alt = role === "host" ? ["KeyA", "KeyD", "KeyW"] : ["ArrowLeft", "ArrowRight", "ArrowUp"];
-      c.left = combineKeys(c.left, kb.addKey(alt[0]));
-      c.right = combineKeys(c.right, kb.addKey(alt[1]));
-      c.up = combineKeys(c.up, kb.addKey(alt[2]));
+      c.left = combineKeys(c.left, altKey(kb, alt[0]));
+      c.right = combineKeys(c.right, altKey(kb, alt[1]));
+      c.up = combineKeys(c.up, altKey(kb, alt[2]));
     } catch (e) {
       console.error("[ONLINE] ek tuşlar eklenemedi", e);
     }
@@ -1155,6 +1338,9 @@
     installAltKeys(g, lv);
 
     attached = true;
+    attWorld = world;
+    attP1 = lv.pers1;
+    attP2 = lv.pers2;
     detailLogs = 0;
     lastDetail = 0;
     if (role === "guest") send({ t: "rs" });
@@ -1187,6 +1373,9 @@
     var g = getGame();
     if (!g) return;
     hookGame(g);
+    guardLoop(g);
+    runPendingGo();
+    watchGo();
     if (connected) setNoBlurPause(true);
     if (!g.level) return;
     if (g.level !== level) {
@@ -1194,18 +1383,32 @@
       attached = false;
     }
     hookLevel(level);
+    var fading = !!(g.state && g.state.fading);
+    var world = g.physics && g.physics.box2d && g.physics.box2d.world;
+    // Aynı Level nesnesi/dünya yeniden kullanılsa bile yeni karakterler = yeni bölüm: yeniden bağlan
+    if (attached && (world !== attWorld || level.pers1 !== attP1 || level.pers2 !== attP2)) {
+      log("YENİDEN BAĞLANMA gerekli: dünya/karakter değişti " + describeTransition());
+      attached = false;
+      bodies = [];
+    }
     if (
       connected &&
       peerHere &&
       !attached &&
+      !fading && // geçiş sürerken (eski bölüm ölüyor) bağlanma
       level.pers1 &&
       level.pers2 &&
-      g.physics &&
-      g.physics.box2d &&
-      g.physics.box2d.world &&
-      g.physics.box2d.paused === false
+      !(level.pers1 === deadP1 && level.pers2 === deadP2) && // detach edilen ölü bölüme geri bağlanma
+      world &&
+      g.physics.box2d.paused === false &&
+      Date.now() >= attachRetryAt
     ) {
-      attach(g, level);
+      try {
+        attach(g, level);
+      } catch (e) {
+        attachRetryAt = Date.now() + 500;
+        log("ATTACH HATA: " + (e && e.stack ? e.stack : e));
+      }
     }
   }
 
@@ -1217,11 +1420,14 @@
 
   function pruneDead() {
     var now = Date.now();
-    if (now - lastPrune < 100) return;
-    lastPrune = now;
     var g = getGame();
     var world = g && g.physics && g.physics.box2d && g.physics.box2d.world;
     if (!world || !bodies.length) return;
+    // Gövde sayısı değiştiyse (silinme/yeni) 100ms beklemeden hemen temizle: ölü gövdeye yazmayalım
+    var cnt = typeof world.GetBodyCount === "function" ? world.GetBodyCount() : -1;
+    if (cnt === lastBodyCount && now - lastPrune < 100) return;
+    lastBodyCount = cnt;
+    lastPrune = now;
     var alive = aliveSet;
     alive.clear();
     var wb = world.GetBodyList();
@@ -1364,6 +1570,9 @@
 
   function applySnapshot(m) {
     if (!attached || !level) return;
+    var gq = getGame();
+    // Oyun başka bir bölüme geçtiyse / geçiş sürüyorsa eski gövdelere dokunma
+    if (!gq || gq.level !== level || (gq.state && gq.state.fading)) return;
     if (typeof m.n === "number") {
       if (m.n <= lastSeq) return;
       lastSeq = m.n;
@@ -2208,6 +2417,7 @@
     buildUI();
     setInterval(flushLog, 2000);
     setInterval(checkLevel, 100);
+    setInterval(watchdog, 500);
     setInterval(sendPing, 1000);
     setInterval(heartbeat, 2000);
     setInterval(refreshExtra, 500);
