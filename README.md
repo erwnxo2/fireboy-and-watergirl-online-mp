@@ -5,7 +5,7 @@
 **Installation**
 
 * **Mod Installation: Go to the game directory, navigate to the `resources` folder, then into the `app` folder. Drag and drop the `main.js` file there and choose to replace the file in the destination. Next, go to the `www` folder, drag and drop the `online.js` and `index.html` files there, replacing the destination files if necessary.**
-* **Server Installation: Create a new folder anywhere you like and place the server files (`server.js` and `start-server.bat`) inside it.**
+- ~~**Server Installation: Create a new folder anywhere you like and place the server files (`server.js` and `start-server.bat`) inside it.**~~  The server has been embedded into online.js and configured to run automatically.
 
 **How It Works**
 
