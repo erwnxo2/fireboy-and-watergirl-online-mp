@@ -1,4 +1,30 @@
-/* Ateş ve Su - Online Mod (prototip v0.9.8 - SENKRON KONTROLÜ, v0.9.7 oyun olayları senkronu, v0.9.6 donma düzeltmesi, TR/EN)
+/* Ateş ve Su - Online Mod (prototip v0.9.11 - ONLINE SUNUCU (internet lobileri), v0.9.10 lobi tarayıcı TCP yoklaması, v0.9.9 LAN LOBİ TARAYICI, v0.9.8 senkron kontrolü, v0.9.7 oyun olayları senkronu, v0.9.6 donma düzeltmesi, TR/EN)
+ *
+ * v0.9.11: ONLINE SUNUCU. Oyun artık internetten de oynanabilir: merkezi sunucuya (fbwg-server.js, ayrı dosya, VPS'te çalışır)
+ *   bağlanılır. Host "Başlat" deyince (Lobi türü: Online) sunucuda bir oda açılır; menüdeki lobi listesi yerel ağ lobilerinin yanında
+ *   sunucudaki odaları da gösterir (🌐). Oda isteğe bağlı şifreli olabilir (🔒). Oyun verisi sunucu üzerinden aktarılır: host'ta port
+ *   açmaya / IP öğrenmeye gerek yok. Yerel ağ modu (UDP + TCP tarama, elle IP) aynen çalışmaya devam eder.
+ *   Sunucu adresi: menü → Ayarlar → "Online sunucu adresi" ya da aşağıdaki ONLINE_SERVER_DEFAULT satırı.
+ *   Protokol eklemeleri: host {name, pw}, join {room, pw}, ok {room}, list/lobbies, err {fatal} (düzeltilemez hatada otomatik
+ *   yeniden bağlanma yapılmaz: yanlış şifre, dolu/kapanmış lobi, sürüm uyuşmazlığı). Bağlantı kurma zaman aşımı 10 sn.
+ *   İki taraf da yeni dosyayı kullanmalı (sürüm kontrolü).
+ *
+ * v0.9.10: LOBİ TARAYICI DÜZELTMESİ (TCP YOKLAMASI).
+ *   (1) UDP yayını, gelen UDP'yi engelleyen güvenlik duvarı/ağ yüzünden öbür bilgisayara ulaşmayabiliyordu (elle IP ile TCP
+ *       bağlantısı çalışırken liste boş kalıyordu). Tarayıcı artık ikinci bir yol da kullanıyor: yerel ağdaki adreslerin oyun
+ *       portuna kısa bir TCP bağlantısı deneyip {"t":"info"} yollar; açık lobisi olan oyunun gömülü sunucusu özetini (ad, sürüm,
+ *       oyuncu sayısı) cevaplar. Giden TCP genelde serbest olduğundan UDP çalışmasa da lobi görünür. İki yol aynı listeye yazar.
+ *   (2) Lobi listesinin altına küçük bir tanı satırı eklendi (UDP dinleme durumu/paket sayısı, TCP'de taranan adres sayısı).
+ *   Not: TCP yoklaması sadece oyunun gömülü sunucusunu açan host'ları bulur (ayrı çalışan server.js "info"ya cevap vermez).
+ *   İki taraf da yeni dosyayı kullanmalı (sürüm kontrolü).
+ *
+ * v0.9.9: LAN LOBİ TARAYICI. IP yazmadan, aynı yerel ağdaki açık lobileri listeden görüp katılabilirsin.
+ *   Host "Başlat" deyince lobisini UDP yayınıyla (port 7778, saniyede 1 kez) ağa duyurur: lobi adı, sürüm, oyuncu sayısı (1/2).
+ *   Menü (F9) açıkken ve bağlı değilken oyun aynı portu dinler ve lobileri listeler; 4,5 sn duyuru gelmeyen lobi listeden düşer.
+ *   Sürümü uyuşmayan ya da dolu (2/2) lobiye "Katıl" kapalıdır. Oyun verisi hâlâ TCP (7777) üzerinden gider, ağ protokolü değişmedi;
+ *   elle IP:port yazarak bağlanma da çalışmaya devam eder. İki taraf da yeni dosyayı kullanmalı (sürüm kontrolü).
+ *   Windows güvenlik duvarı ilk açılışta soruyorsa "Özel ağlar"a izin ver; yoksa liste boş kalır (UDP 7778 gelen).
+ *   Ağ UDP yayınını engelliyorsa (bazı okul/kafe/konuk Wi-Fi ağları, istemci yalıtımı) liste boş kalır; elle IP ile bağlan.
  *
  * v0.9.8: SENKRON KONTROLÜ (kendini onaran). Host saniyede bir küçük bir özet yollar (ev:"chk"): aygıt durumları, çıkış kapıları,
  *   hangi elmasların alınmış olduğu. Aynı kanaldan, olayların hemen arkasından gittiği için guest o ana kadarki olayları
@@ -53,8 +79,10 @@
 (function () {
   "use strict";
 
-  var VERSION = "v0.9.8";
+  var VERSION = "v0.9.11";
   var DEFAULT_SERVER = "127.0.0.1:7777";
+  // Merkezi sunucunun adresi (IP:port). Boş bırakırsan menüden (Ayarlar → Online sunucu adresi) girersin.
+  var ONLINE_SERVER_DEFAULT = "";
   var SNAP_MS = 33; // 30Hz
   var FAST_MS = 12;
   var BODY_STATIC = 0;
@@ -85,12 +113,12 @@
       stateHostBoth: "Ateş · iki oyuncu hazır",
       stateGuestBoth: "Su · iki oyuncu hazır",
       secConn: "Bağlantı",
-      lblAddr: "Sunucu adresi (aynı ağdaki bilgisayarın IP:port'u)",
+      lblAddr: "Elle bağlan: sunucu adresi (IP:port)",
       btnStart: "Başlat",
       btnStartSub: "Ateş olarak",
       btnJoin: "Bağlan",
       btnJoinSub: "Su olarak",
-      hostHint: "Başlat'a basarsan sunucu bu bilgisayarda açılır; arkadaşın şu adrese bağlanır: {0}",
+      hostHint: "Başlat'a basarsan lobin aynı ağdaki arkadaşının lobi listesinde görünür. Elle bağlanacaksa adres: {0}",
       hostHintNone: "Ağ adresin bulunamadı; Windows'ta ipconfig ile IPv4 adresine bak.",
       mSrvStarted: "sunucu bu bilgisayarda açıldı (port {0}). Arkadaşın şuraya bağlansın: {1}",
       mSrvUsing: "port {0} zaten kullanımda, çalışan sunucuya bağlanılıyor",
@@ -158,7 +186,36 @@
       mNoFile: "dosya oluşturulamadı",
       chatPlaceholder: "Mesaj yaz...",
       chatFireName: "Ateş",
-      chatWaterName: "Su"
+      chatWaterName: "Su",
+      secLobby: "Lobiler",
+      lobbyEmpty: "Açık lobi bulunamadı. Biri Başlat'a basınca burada görünür.",
+      lobbyJoin: "Katıl",
+      lobbyFull: "Dolu",
+      lobbyVer: "Sürüm uyuşmuyor",
+      lobbyScanErr: "UDP taraması başlatılamadı: {0} (TCP taraması çalışıyor)",
+      lblLobbyName: "Lobi adı (listede görünür)",
+      btnLobbies: "🌐 Lobiler",
+      btnOnline: "🌐 Online",
+      lobbyDiag: "Tarama · UDP: {0} · TCP: {1}",
+      diagUdpOk: "dinliyor, {0} paket",
+      diagTcpHosts: "{0} adres",
+      lblMode: "Lobi türü (Başlat için)",
+      modeOnline: "Online (internet, sunucu üzerinden)",
+      modeLan: "Yerel ağ",
+      lblPw: "Lobi şifresi (isteğe bağlı; açarken ve katılırken)",
+      setSrv: "Online sunucu adresi",
+      setSrvDesc: "Merkezi sunucunun IP:port'u (örn. 203.0.113.5:7780)",
+      srvDiag: "Online sunucu: {0}",
+      srvNone: "adres girilmedi (Ayarlar)",
+      srvConnecting: "bağlanıyor…",
+      srvErr: "bağlanılamadı ({0})",
+      srvOk: "bağlı · {0} ms · {1} lobi · {2} çevrimiçi",
+      lobbyOnline: "Online",
+      lobbyLocked: "Şifreli",
+      lobbyNeedPw: "Bu lobi şifreli: şifreyi 'Lobi şifresi' kutusuna yaz, sonra Katıl'a bas.",
+      mSrvNoAddr: "Online sunucu adresi girilmedi (menü → Ayarlar → Online sunucu adresi).",
+      mOnlineHostReady: "online lobi açıldı: {0}; arkadaşın listeden katılabilir (sen: Ateş)",
+      hostHintOnline: "Başlat'a basarsan lobin online listede görünür; arkadaşın IP yazmadan katılır."
     },
     en: {
       menuTitle: "Fire and Water",
@@ -171,12 +228,12 @@
       stateHostBoth: "Fire · both players ready",
       stateGuestBoth: "Water · both players ready",
       secConn: "Connection",
-      lblAddr: "Server address (IP:port of the computer on the same network)",
+      lblAddr: "Connect manually: server address (IP:port)",
       btnStart: "Start",
       btnStartSub: "as Fire",
       btnJoin: "Connect",
       btnJoinSub: "as Water",
-      hostHint: "Start opens the server on this computer; your friend connects to: {0}",
+      hostHint: "Start shows your lobby in your friend's lobby list on the same network. To connect manually, use: {0}",
       hostHintNone: "No network address found; check your IPv4 address with ipconfig.",
       mSrvStarted: "server started on this computer (port {0}). Your friend connects to: {1}",
       mSrvUsing: "port {0} is already in use, connecting to the running server",
@@ -244,7 +301,36 @@
       mNoFile: "could not create file",
       chatPlaceholder: "Type a message...",
       chatFireName: "Fire",
-      chatWaterName: "Water"
+      chatWaterName: "Water",
+      secLobby: "Lobbies",
+      lobbyEmpty: "No open lobbies found. They show up here when someone presses Start.",
+      lobbyJoin: "Join",
+      lobbyFull: "Full",
+      lobbyVer: "Version mismatch",
+      lobbyScanErr: "Could not start UDP scan: {0} (TCP scan still running)",
+      lblLobbyName: "Lobby name (shown in the list)",
+      btnLobbies: "🌐 Lobbies",
+      btnOnline: "🌐 Online",
+      lobbyDiag: "Scan · UDP: {0} · TCP: {1}",
+      diagUdpOk: "listening, {0} packets",
+      diagTcpHosts: "{0} addresses",
+      lblMode: "Lobby type (for Start)",
+      modeOnline: "Online (internet, via server)",
+      modeLan: "Local network",
+      lblPw: "Lobby password (optional; when hosting and joining)",
+      setSrv: "Online server address",
+      setSrvDesc: "IP:port of the central server (e.g. 203.0.113.5:7780)",
+      srvDiag: "Online server: {0}",
+      srvNone: "no address set (Settings)",
+      srvConnecting: "connecting…",
+      srvErr: "cannot connect ({0})",
+      srvOk: "connected · {0} ms · {1} lobbies · {2} online",
+      lobbyOnline: "Online",
+      lobbyLocked: "Password",
+      lobbyNeedPw: "This lobby has a password: type it in the 'Lobby password' box, then press Join.",
+      mSrvNoAddr: "No online server address set (menu → Settings → Online server address).",
+      mOnlineHostReady: "online lobby opened: {0}; your friend can join from the list (you: Fire)",
+      hostHintOnline: "Start puts your lobby in the online list; your friend joins without typing an IP."
     }
   };
 
@@ -290,6 +376,7 @@
   var HOLD_MS = 70;
   var hostPulse = { l: 0, r: 0, u: 0 };
   var rtt = 0;
+  var peerRtt = 0;
   var compOn = true;
   var delayMs = 0;
   var rawLocal = null;
@@ -364,6 +451,8 @@
   var autoReconnect = false;
   var reconnectAddr = "";
   var reconnectRole = "";
+  var reconnectExtra = null; // online bağlantı bilgisi {online, name|room, pw}
+  var onlineMode = false; // şu anki bağlantı merkezi sunucuya mı
   var reconnectTimer = null;
 
   var dropWin = 0;
@@ -667,6 +756,16 @@
   function embHandle(sk, msg, line) {
     if (!msg || typeof msg !== "object" || typeof msg.t !== "string") return;
     if (msg.t === "hb") return;
+    if (msg.t === "info") {
+      // LAN lobi tarayıcısının TCP yoklaması: açık lobi varsa özetini yolla, bağlantıyı kapat (lobi yoksa sessizce kapat)
+      if (embRoom) {
+        embSend(sk, { t: "info", m: DISC_MAGIC, v: embRoom.ver, p: embPort, n: currentLobbyName(), c: embRoom.guest ? 2 : 1 });
+      }
+      try {
+        sk.end();
+      } catch (e) {}
+      return;
+    }
     if (msg.t === "host" || msg.t === "join") {
       if (sk.__role) return embSend(sk, { t: "err", msg: "Zaten bir lobidesin" });
       var ver = String(msg.ver === undefined ? "?" : msg.ver).slice(0, 24);
@@ -852,8 +951,699 @@
   }
   // END-EMB
 
+  /* ---------------- LAN lobi tarayıcı (v0.9.9) ---------------- */
+  // Host "Başlat" deyince lobisini UDP yayınıyla (broadcast) yerel ağa duyurur. Menü açıkken oyun aynı UDP portunu dinler
+  // ve bulunan lobileri listeler. Oyun verisi yine TCP (7777) üzerinden gider; bu sadece "IP yazmadan bulma" katmanı.
+  var DISC_PORT = 7778;
+  var DISC_MS = 1000;
+  var DISC_TTL_MS = 4500;
+  var DISC_MAX_LOBBIES = 50;
+  var DISC_MAGIC = "fbwg-lobby";
+  var hostPort = 7777; // host'un TCP portu (duyuruda yayınlanır)
+  var discSend = null; // host: yayın soketi
+  var discSendReady = false;
+  var discAdvTimer = null;
+  var discSock = null; // tarayıcı: dinleme soketi
+  var discRetryAt = 0;
+  var lobbies = {}; // "ip:port" -> { key, ip, port, name, ver, players, seen }
+  var lobbyErr = "";
+  var lastLobbySig = "";
+  var lobbyListEl = null;
+  var lobbySecEl = null;
+  var lobbyDiagEl = null;
+  var udpPkts = 0; // tanı: dinleme soketine gelen UDP paket sayısı
+  var lobbyBrowserEl = null;
+  var lobbyBrowserListEl = null;
+
+  function cleanLobbyName(s) {
+    return String(s === undefined || s === null ? "" : s)
+      .replace(/[\u0000-\u001f\u007f<>]/g, "")
+      .trim()
+      .slice(0, 24);
+  }
+
+  function defaultLobbyName() {
+    try {
+      var os = window.nodeRequire("os");
+      var n = "";
+      try { n = cleanLobbyName(os.userInfo().username); } catch (e) {}
+      if (!n) n = cleanLobbyName(os.hostname());
+      if (n) return n;
+    } catch (e) {}
+    return t("chatFireName");
+  }
+
+  function currentLobbyName() {
+    var el = panelEl && panelEl.querySelector("#onl-lname");
+    return cleanLobbyName(el ? el.value : loadSaved("lname", "")) || defaultLobbyName();
+  }
+
+  // Her ağ kartının kendi alt ağına yayın adresi; 255.255.255.255 her zaman eklenir
+  function broadcastTargets() {
+    var out = [];
+    try {
+      var nets = window.nodeRequire("os").networkInterfaces();
+      Object.keys(nets).forEach(function (k) {
+        (nets[k] || []).forEach(function (a) {
+          if ((a.family === "IPv4" || a.family === 4) && !a.internal && a.netmask) {
+            var ip = a.address.split(".").map(Number);
+            var mk = a.netmask.split(".").map(Number);
+            if (ip.length !== 4 || mk.length !== 4) return;
+            var b = ip.map(function (o, i) { return (o | (~mk[i] & 255)) & 255; }).join(".");
+            if (out.indexOf(b) < 0) out.push(b);
+          }
+        });
+      });
+    } catch (e) {}
+    // 255.255.255.255 her zaman dene (subnet broadcast bazı ağlarda çalışmayabilir)
+    if (out.indexOf("255.255.255.255") < 0) out.push("255.255.255.255");
+    return out;
+  }
+
+  /* --- Host: lobiyi duyur --- */
+
+  function advertiseOnce() {
+    if (!discSend || !discSendReady) return;
+    if (role !== "host" || !connected) return;
+    var data;
+    try {
+      var Buf = window.nodeRequire("buffer").Buffer;
+      data = Buf.from(
+        JSON.stringify({ m: DISC_MAGIC, v: VERSION, p: hostPort, n: currentLobbyName(), c: peerHere ? 2 : 1 })
+      );
+    } catch (e) {
+      return;
+    }
+    broadcastTargets().forEach(function (addr) {
+      try {
+        discSend.send(data, 0, data.length, DISC_PORT, addr, function () {});
+      } catch (e) {}
+    });
+  }
+
+  function stopAdvertise() {
+    if (discAdvTimer) {
+      clearInterval(discAdvTimer);
+      discAdvTimer = null;
+    }
+    discSendReady = false;
+    var s = discSend;
+    discSend = null;
+    if (s) {
+      try { s.close(); } catch (e) {}
+    }
+  }
+
+  function startAdvertise() {
+    stopAdvertise();
+    var dgram;
+    try {
+      dgram = window.nodeRequire("dgram");
+    } catch (e) {
+      log("LOBİ duyurusu: dgram yüklenemedi");
+      return;
+    }
+    try {
+      var s = dgram.createSocket({ type: "udp4", reuseAddr: true });
+      discSend = s;
+      s.on("error", function (e) {
+        log("LOBİ duyuru hatası: " + (e && e.message ? e.message : e));
+      });
+      s.bind(0, function () {
+        if (discSend !== s) return;
+        try { s.setBroadcast(true); } catch (e) {}
+        discSendReady = true;
+        advertiseOnce();
+      });
+      discAdvTimer = setInterval(advertiseOnce, DISC_MS);
+      log("LOBİ duyurusu başladı: ad=" + currentLobbyName() + " port=" + hostPort);
+    } catch (e) {
+      log("LOBİ duyurusu başlatılamadı: " + (e && e.message ? e.message : e));
+    }
+  }
+
+  /* --- Tarayıcı: lobileri dinle ve listele --- */
+
+  // UDP duyurusu ve TCP yoklaması aynı listeye yazar (anahtar ip:port); ttl: bu girdinin ömrü
+  function registerLobby(ip, port, m, via, ttl) {
+    var key = ip + ":" + port;
+    var isNew = !lobbies[key];
+    if (isNew && Object.keys(lobbies).length >= DISC_MAX_LOBBIES) return;
+    lobbies[key] = {
+      key: key,
+      ip: ip,
+      port: port,
+      name: cleanLobbyName(m.n),
+      ver: cleanLobbyName(m.v) || "?",
+      players: m.c === 2 ? 2 : 1,
+      seen: Date.now(),
+      ttl: ttl
+    };
+    if (isNew) log("LOBİ bulundu (" + via + "): " + key + " ad=" + lobbies[key].name + " sürüm=" + lobbies[key].ver);
+  }
+
+  function onLobbyPacket(buf, rinfo) {
+    udpPkts++;
+    var m;
+    try {
+      m = JSON.parse(buf.toString("utf8"));
+    } catch (e) {
+      return;
+    }
+    if (!m || typeof m !== "object" || m.m !== DISC_MAGIC) return;
+    var port = parseInt(m.p, 10);
+    if (isNaN(port) || port < 1 || port > 65535) return;
+    // rinfo bazı Node/NW.js sürümlerinde string olabilir, bazılarında {address, port} objesi
+    var ip = (rinfo && typeof rinfo === "object") ? rinfo.address : (typeof rinfo === "string" ? rinfo : null);
+    if (typeof ip !== "string" || !ip) return;
+    registerLobby(ip, port, m, "udp", DISC_TTL_MS);
+  }
+
+  function stopLobbyScan() {
+    var s = discSock;
+    discSock = null;
+    lobbies = {};
+    lastLobbySig = "";
+    if (s) {
+      try { s.close(); } catch (e) {}
+    }
+  }
+
+  function lobbyScanFailed(s, e) {
+    lobbyErr = e && e.code ? e.code : String((e && e.message) || e);
+    log("LOBİ tarama hatası: " + (e && e.message ? e.message : e));
+    if (discSock === s) discSock = null;
+    try { s.close(); } catch (x) {}
+    discRetryAt = Date.now() + 5000;
+    lastLobbySig = "";
+  }
+
+  function startLobbyScan() {
+    if (discSock || Date.now() < discRetryAt) return;
+    var dgram;
+    try {
+      dgram = window.nodeRequire("dgram");
+    } catch (e) {
+      lobbyErr = "dgram";
+      return;
+    }
+    var s;
+    try {
+      s = dgram.createSocket({ type: "udp4", reuseAddr: true });
+    } catch (e) {
+      lobbyErr = e && e.code ? e.code : String((e && e.message) || e);
+      discRetryAt = Date.now() + 5000;
+      return;
+    }
+    discSock = s;
+    lobbyErr = "";
+    udpPkts = 0;
+    s.on("message", onLobbyPacket);
+    s.on("error", function (e) { lobbyScanFailed(s, e); });
+    try {
+      s.bind(DISC_PORT, "0.0.0.0", function () {
+        if (discSock !== s) return;
+        try { s.setBroadcast(true); } catch (e) {}
+      });
+    } catch (e) {
+      lobbyScanFailed(s, e);
+    }
+  }
+
+  /* --- Tarayıcı: TCP yoklaması (v0.9.10) --- */
+  // UDP yayını, gelen UDP'yi engelleyen güvenlik duvarına takılabiliyor (Windows ilk açılışta sormamış ya da "Hayır" denmiş olabilir).
+  // Giden TCP ise genelde serbest: menü açıkken oyun, yerel ağdaki her adresin oyun portuna kısa bir bağlantı deneyip
+  // {"t":"info"} yollar. Açık lobisi olan bilgisayarın gömülü sunucusu özetini cevaplar (embHandle "info").
+  var SCAN_TCP_GAP_MS = 1500; // iki tarama arası bekleme
+  var SCAN_TCP_TIMEOUT_MS = 800; // bir adres için en fazla bekleme
+  var SCAN_TCP_PARALLEL = 64;
+  var SCAN_TCP_MAX_HOSTS = 1024;
+  var SCAN_TCP_TTL_MS = 12000; // tarama ~3-4 sn'de bir döner; girdi ondan uzun yaşasın
+  var tcpScanBusy = false;
+  var tcpScanLast = 0;
+  var tcpTargetCount = 0;
+
+  function ipToInt(str) {
+    var p = String(str).split(".").map(Number);
+    if (p.length !== 4) return NaN;
+    return p[0] * 16777216 + p[1] * 65536 + p[2] * 256 + p[3];
+  }
+
+  function intToIp(n) {
+    return [(n >>> 24) & 255, (n >>> 16) & 255, (n >>> 8) & 255, n & 255].join(".");
+  }
+
+  // Her ağ kartının alt ağındaki adresler (kendi adreslerimiz hariç). /24'ten büyük ağlarda sadece kendi /24 dilimimiz.
+  function scanTargets() {
+    var out = [];
+    var seen = {};
+    var own = {};
+    var list = [];
+    try {
+      var nets = window.nodeRequire("os").networkInterfaces();
+      Object.keys(nets).forEach(function (k) {
+        (nets[k] || []).forEach(function (a) {
+          if ((a.family === "IPv4" || a.family === 4) && !a.internal && a.address) {
+            own[a.address] = 1;
+            if (a.address.indexOf("169.254.") !== 0) list.push(a);
+          }
+        });
+      });
+    } catch (e) {}
+    list.forEach(function (a) {
+      var ip = ipToInt(a.address);
+      var mask = a.netmask ? ipToInt(a.netmask) : 4294967040;
+      if (isNaN(ip) || isNaN(mask)) return;
+      if (mask < 4294967040) mask = 4294967040;
+      var netw = (ip & mask) >>> 0;
+      var bc = (netw | (~mask >>> 0)) >>> 0;
+      for (var h = netw + 1; h < bc && out.length < SCAN_TCP_MAX_HOSTS; h++) {
+        var s = intToIp(h);
+        if (own[s] || seen[s]) continue;
+        seen[s] = 1;
+        out.push(s);
+      }
+    });
+    return out;
+  }
+
+  // Adres kutusundaki port (yoksa 7777)
+  function scanPort() {
+    var el = panelEl && panelEl.querySelector("#onl-addr");
+    var p = parseInt(String(el ? el.value : loadSaved("addr", DEFAULT_SERVER)).split(":")[1] || "7777", 10);
+    return isNaN(p) || p < 1 || p > 65535 ? 7777 : p;
+  }
+
+  function tcpScanOnce() {
+    if (tcpScanBusy) return;
+    var net;
+    try {
+      net = window.nodeRequire("net");
+    } catch (e) {
+      return;
+    }
+    var targets = scanTargets();
+    tcpTargetCount = targets.length;
+    if (!targets.length) {
+      tcpScanLast = Date.now();
+      return;
+    }
+    var port = scanPort();
+    var idx = 0;
+    var active = 0;
+    var finished = false;
+    tcpScanBusy = true;
+
+    function finish() {
+      if (finished) return;
+      finished = true;
+      tcpScanBusy = false;
+      tcpScanLast = Date.now();
+    }
+
+    function pump() {
+      if (finished) return;
+      while (active < SCAN_TCP_PARALLEL && idx < targets.length) probe(targets[idx++]);
+      if (!active && idx >= targets.length) finish();
+    }
+
+    function probe(ip) {
+      active++;
+      var done = false;
+      var sk = null;
+      var b = "";
+      var tm = null;
+      function end() {
+        if (done) return;
+        done = true;
+        if (tm) clearTimeout(tm);
+        try {
+          if (sk) sk.destroy();
+        } catch (e) {}
+        active--;
+        pump();
+      }
+      tm = setTimeout(end, SCAN_TCP_TIMEOUT_MS);
+      try {
+        sk = net.connect({ host: ip, port: port }, function () {
+          try {
+            sk.write('{"t":"info"}\n');
+          } catch (e) {
+            end();
+          }
+        });
+        sk.setEncoding("utf8");
+        sk.on("data", function (chunk) {
+          b += chunk;
+          if (b.length > 4000) {
+            end();
+            return;
+          }
+          var i;
+          while ((i = b.indexOf("\n")) >= 0) {
+            var line = b.slice(0, i);
+            b = b.slice(i + 1);
+            var m = null;
+            try {
+              m = JSON.parse(line);
+            } catch (e) {}
+            if (m && m.t === "info" && m.m === DISC_MAGIC) {
+              var p = parseInt(m.p, 10);
+              registerLobby(ip, isNaN(p) || p < 1 || p > 65535 ? port : p, m, "tcp", SCAN_TCP_TTL_MS);
+              end();
+              return;
+            }
+          }
+        });
+        sk.on("error", end);
+        sk.on("close", end);
+      } catch (e) {
+        end();
+      }
+    }
+
+    pump();
+  }
+
+  function tcpScanTick() {
+    if (tcpScanBusy || Date.now() - tcpScanLast < SCAN_TCP_GAP_MS) return;
+    tcpScanOnce();
+  }
+
+  /* --- Online sunucu: lobi listesi (v0.9.11) --- */
+  // Menü açıkken merkezi sunucuya kısa ömürlü bir bağlantı açılır ve 3 sn'de bir {"t":"list"} sorulur. Gelen odalar yerel lobilerle
+  // aynı listeye "srv:<oda kimliği>" anahtarıyla yazılır. Menü kapanınca ya da bir lobiye girince bu bağlantı kapanır.
+  var ONL_POLL_MS = 3000;
+  var ONL_TTL_MS = 9000;
+  var ONL_CONNECT_MS = 6000;
+  var ONL_SILENT_MS = 10000;
+  var onlSock = null;
+  var onlBuf = "";
+  var onlUp = false;
+  var onlTimer = null;
+  var onlRetryAt = 0;
+  var onlErr = "";
+  var onlRtt = 0;
+  var onlSentAt = 0;
+  var onlLastPoll = 0;
+  var onlLastRecv = 0;
+  var onlRoomCount = 0;
+  var onlOnlineCount = 0;
+  var onlGotList = false;
+  var srvDiagEl = null;
+
+  function currentSrvAddr() {
+    var el = panelEl && panelEl.querySelector("#onl-srv");
+    return String(el ? el.value : loadSaved("srv", ONLINE_SERVER_DEFAULT)).trim();
+  }
+
+  function srvParsed() {
+    var s = currentSrvAddr();
+    if (!s) return null;
+    var p = s.split(":");
+    var host = p[0].trim();
+    var port = parseInt(p[1] || "7780", 10);
+    if (!host || isNaN(port) || port < 1 || port > 65535) return null;
+    return { host: host, port: port };
+  }
+
+  function onlDropRows() {
+    Object.keys(lobbies).forEach(function (k) {
+      if (lobbies[k].srv) delete lobbies[k];
+    });
+    lastLobbySig = "";
+  }
+
+  function onlStop() {
+    if (onlTimer) {
+      clearTimeout(onlTimer);
+      onlTimer = null;
+    }
+    var s = onlSock;
+    onlSock = null;
+    onlUp = false;
+    onlBuf = "";
+    onlGotList = false;
+    if (s) {
+      try { s.destroy(); } catch (e) {}
+    }
+    onlDropRows();
+  }
+
+  function onlFail(s, why) {
+    if (onlSock !== s) {
+      try { s.destroy(); } catch (e) {}
+      return;
+    }
+    log("ONLINE sunucu listesi hatası: " + why);
+    onlStop();
+    onlErr = String(why);
+    onlRetryAt = Date.now() + 5000;
+  }
+
+  function onlHandle(m) {
+    if (!m || m.t !== "lobbies" || !Array.isArray(m.rooms)) return;
+    var now = Date.now();
+    if (onlSentAt) {
+      var rr = now - onlSentAt;
+      if (rr >= 0 && rr < 5000) onlRtt = onlRtt ? onlRtt * 0.6 + rr * 0.4 : rr;
+    }
+    onlGotList = true;
+    onlErr = "";
+    onlRoomCount = parseInt(m.nrooms, 10) || m.rooms.length;
+    onlOnlineCount = parseInt(m.online, 10) || 0;
+    var seen = {};
+    m.rooms.slice(0, DISC_MAX_LOBBIES).forEach(function (r) {
+      if (!r || typeof r.id !== "string" || !/^[a-z0-9]{3,12}$/.test(r.id)) return;
+      var key = "srv:" + r.id;
+      seen[key] = 1;
+      lobbies[key] = {
+        key: key,
+        srv: true,
+        room: r.id,
+        ip: "",
+        port: 0,
+        name: cleanLobbyName(r.n),
+        ver: cleanLobbyName(r.v) || "?",
+        players: r.c === 2 ? 2 : 1,
+        locked: !!r.pw,
+        seen: now,
+        ttl: ONL_TTL_MS
+      };
+    });
+    Object.keys(lobbies).forEach(function (k) {
+      if (lobbies[k].srv && !seen[k]) delete lobbies[k];
+    });
+  }
+
+  function onlStart() {
+    if (onlSock || Date.now() < onlRetryAt) return;
+    var a = srvParsed();
+    if (!a) return;
+    var net;
+    try {
+      net = window.nodeRequire("net");
+    } catch (e) {
+      onlErr = "net";
+      onlRetryAt = Date.now() + 5000;
+      return;
+    }
+    var s;
+    try {
+      s = net.connect({ host: a.host, port: a.port }, function () {
+        if (onlSock !== s) return;
+        onlUp = true;
+        if (onlTimer) {
+          clearTimeout(onlTimer);
+          onlTimer = null;
+        }
+        try { s.setNoDelay(true); } catch (e) {}
+        onlLastRecv = Date.now();
+        onlLastPoll = 0; // hemen sor
+        onlPoll();
+      });
+    } catch (e) {
+      onlErr = (e && e.code) || (e && e.message) || "error";
+      onlRetryAt = Date.now() + 5000;
+      return;
+    }
+    onlSock = s;
+    onlUp = false;
+    onlBuf = "";
+    onlGotList = false;
+    onlLastRecv = Date.now();
+    s.setEncoding("utf8");
+    onlTimer = setTimeout(function () {
+      if (onlSock === s && !onlUp) onlFail(s, "ETIMEDOUT");
+    }, ONL_CONNECT_MS);
+    s.on("data", function (chunk) {
+      if (onlSock !== s) return;
+      onlLastRecv = Date.now();
+      onlBuf += chunk;
+      if (onlBuf.length > 200000) {
+        onlFail(s, "too big");
+        return;
+      }
+      var i;
+      while ((i = onlBuf.indexOf("\n")) >= 0) {
+        var line = onlBuf.slice(0, i);
+        onlBuf = onlBuf.slice(i + 1);
+        if (!line) continue;
+        try {
+          onlHandle(JSON.parse(line));
+        } catch (e) {}
+      }
+    });
+    s.on("error", function (e) { onlFail(s, (e && e.code) || (e && e.message) || "error"); });
+    s.on("close", function () { onlFail(s, "closed"); });
+  }
+
+  function onlPoll() {
+    if (!onlSock || !onlUp) return;
+    var now = Date.now();
+    if (now - onlLastRecv > ONL_SILENT_MS) {
+      onlFail(onlSock, "timeout");
+      return;
+    }
+    if (now - onlLastPoll < ONL_POLL_MS) return;
+    onlLastPoll = now;
+    onlSentAt = now;
+    try {
+      onlSock.write('{"t":"list"}\n');
+    } catch (e) {}
+  }
+
+  function updateSrvDiag() {
+    if (!srvDiagEl) return;
+    var txt;
+    if (!srvParsed()) txt = t("srvDiag", t("srvNone"));
+    else if (onlGotList && onlSock) txt = t("srvDiag", t("srvOk", Math.round(onlRtt), onlRoomCount, onlOnlineCount));
+    else if (onlErr) txt = t("srvDiag", t("srvErr", onlErr));
+    else txt = t("srvDiag", t("srvConnecting"));
+    if (srvDiagEl.textContent !== txt) srvDiagEl.textContent = txt;
+  }
+
+  function joinLobby(l) {
+    if (l.srv) {
+      var pwEl = panelEl && panelEl.querySelector("#onl-pw");
+      var pw = pwEl ? pwEl.value : "";
+      if (l.locked && !pw) {
+        say(t("lobbyNeedPw"));
+        if (pwEl) pwEl.focus();
+        return;
+      }
+      var sa = currentSrvAddr();
+      if (!sa) return;
+      connect(sa, "join", { online: true, room: l.room, pw: pw });
+      if (panelEl) panelEl.style.display = "none";
+      if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
+      return;
+    }
+    var addr = l.ip + ":" + l.port;
+    save("addr", addr);
+    var el = panelEl && panelEl.querySelector("#onl-addr");
+    if (el) el.value = addr;
+    connect(addr, "join");
+    if (panelEl) panelEl.style.display = "none";
+    if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
+  }
+
+  function buildLobbyRow(l) {
+    var bad = l.ver !== VERSION ? t("lobbyVer") : l.players >= 2 ? t("lobbyFull") : "";
+    var row = document.createElement("div");
+    row.className = "onl-lobby";
+
+    var info = document.createElement("div");
+    info.className = "onl-lb-i";
+    var nm = document.createElement("span");
+    nm.className = "onl-lb-n";
+    nm.textContent = (l.srv ? "🌐 " : "") + (l.locked ? "🔒 " : "") + (l.name || l.ip || l.room);
+    var sub = document.createElement("span");
+    sub.className = "onl-lb-s";
+    var where = l.srv ? t("lobbyOnline") + (l.locked ? " · " + t("lobbyLocked") : "") : l.ip + ":" + l.port;
+    sub.textContent = where + " · " + l.ver + (bad ? " · " + bad : "");
+    info.appendChild(nm);
+    info.appendChild(sub);
+
+    var cnt = document.createElement("span");
+    cnt.className = "onl-lb-c";
+    cnt.textContent = l.players + "/2";
+
+    var btn = document.createElement("button");
+    btn.className = "onl-btn onl-lb-btn";
+    btn.textContent = t("lobbyJoin");
+    btn.disabled = !!bad;
+    btn.onclick = function () { joinLobby(l); };
+
+    row.appendChild(info);
+    row.appendChild(cnt);
+    row.appendChild(btn);
+    return row;
+  }
+
+  function renderLobbyList() {
+    if (!lobbyListEl) return;
+    if (lobbyDiagEl) {
+      var dtxt = t("lobbyDiag", discSock ? t("diagUdpOk", udpPkts) : lobbyErr || "–", t("diagTcpHosts", tcpTargetCount));
+      if (lobbyDiagEl.textContent !== dtxt) lobbyDiagEl.textContent = dtxt;
+    }
+    var now = Date.now();
+    var rows = [];
+    Object.keys(lobbies).forEach(function (k) {
+      if (now - lobbies[k].seen > (lobbies[k].ttl || DISC_TTL_MS)) delete lobbies[k];
+      else rows.push(lobbies[k]);
+    });
+    rows.sort(function (a, b) {
+      if (!!a.srv !== !!b.srv) return a.srv ? -1 : 1; // online lobiler üstte
+      return a.name < b.name ? -1 : a.name > b.name ? 1 : a.key < b.key ? -1 : 1;
+    });
+    // Değişmediyse yeniden çizme (tıklama sırasında düğme kaybolmasın)
+    var sig = LANG + "|" + lobbyErr + "|" + rows.map(function (l) {
+      return l.key + "/" + l.name + "/" + l.ver + "/" + l.players + "/" + (l.locked ? 1 : 0);
+    }).join(";");
+    if (sig === lastLobbySig) return;
+    lastLobbySig = sig;
+    while (lobbyListEl.firstChild) lobbyListEl.removeChild(lobbyListEl.firstChild);
+    if (!rows.length) {
+      var em = document.createElement("div");
+      em.className = "onl-rd";
+      em.textContent = lobbyErr ? t("lobbyScanErr", lobbyErr) : t("lobbyEmpty");
+      lobbyListEl.appendChild(em);
+      return;
+    }
+    rows.forEach(function (l) { lobbyListEl.appendChild(buildLobbyRow(l)); });
+  }
+
+  // 500 ms'de bir: menü açık ve bağlı değilsek yerel ağı + sunucuyu dinle, listeyi yenile; değilsek hepsini bırak
+  function lobbyTick() {
+    if (!panelEl) return;
+    var busy = connected || !!sock;
+    var visible = panelEl.style.display !== "none";
+    if (lobbySecEl) lobbySecEl.style.display = busy ? "none" : "";
+    if (visible && !busy) {
+      startLobbyScan();
+      tcpScanTick();
+      if (srvParsed()) {
+        onlStart();
+        onlPoll();
+      } else if (onlSock) {
+        onlStop();
+      }
+      renderLobbyList();
+      updateSrvDiag();
+    } else {
+      if (discSock) stopLobbyScan();
+      if (onlSock) onlStop();
+      if (Object.keys(lobbies).length) {
+        lobbies = {};
+        lastLobbySig = "";
+      }
+    }
+  }
+
   function disconnect(reason, manual) {
     connectAttemptId++; // bekleyen (sunucu açılmasını bekleyen) bağlantı denemesi iptal
+    stopAdvertise();
     if (!embKeep) stopEmbedded();
     embKeep = false;
     setNoBlurPause(false);
@@ -877,17 +1667,19 @@
     if (autoReconnect && reconnectAddr && reconnectRole && !manual && reason !== MANUAL_REASON) {
       say(t("mReconnecting", msg));
       reconnectTimer = setTimeout(function () {
-        if (!connected) connect(reconnectAddr, reconnectRole);
+        if (!connected) connect(reconnectAddr, reconnectRole, reconnectExtra);
       }, 3000);
     } else {
       say(msg);
     }
   }
 
-  function connect(addr, wantedRole) {
+  function connect(addr, wantedRole, extra) {
     reconnectAddr = addr;
     reconnectRole = wantedRole;
-    embKeep = wantedRole === "host"; // host yeniden bağlanırken sunucuyu kapatma; misafire geçerken kapat
+    reconnectExtra = extra || null;
+    var viaServer = !!(extra && extra.online);
+    embKeep = wantedRole === "host" && !viaServer; // host yeniden bağlanırken sunucuyu kapatma; misafire geçerken kapat
     if (sock) disconnect();
     embKeep = false;
     var net;
@@ -899,10 +1691,20 @@
     }
     var parts = String(addr).trim().split(":");
     var host = parts[0] || "127.0.0.1";
-    var port = parseInt(parts[1] || "7777", 10);
-    if (isNaN(port) || port < 1 || port > 65535) port = 7777;
+    var defPort = viaServer ? 7780 : 7777;
+    var port = parseInt(parts[1] || String(defPort), 10);
+    if (isNaN(port) || port < 1 || port > 65535) port = defPort;
+
+    if (viaServer) {
+      // Merkezi sunucu: host da misafir de sunucuya bağlanır (oda açma/katılma ilk mesajla yapılır)
+      onlineMode = true;
+      openSocket(net, host, port, wantedRole, extra);
+      return;
+    }
+    onlineMode = false;
 
     if (wantedRole === "host") {
+      hostPort = port;
       // Host: sunucu bu bilgisayarda açılır (adres kutusundaki sadece port kullanılır), kendimize bağlanırız
       var attempt = ++connectAttemptId;
       startEmbeddedServer(port, function (st, err) {
@@ -924,14 +1726,23 @@
     openSocket(net, host, port, wantedRole);
   }
 
-  function openSocket(net, host, port, wantedRole) {
+  function openSocket(net, host, port, wantedRole, extra) {
     lastRecv = Date.now();
     lastSeq = -1;
     hostSeq = 0;
     say(t("mConnecting", host, port));
+    var connTimer = null;
     sock = net.connect(port, host, function () {
+      if (connTimer) { clearTimeout(connTimer); connTimer = null; }
+      sock.__open = true;
       sock.setNoDelay(true);
-      send({ t: wantedRole === "host" ? "host" : "join", ver: VERSION });
+      var first = { t: wantedRole === "host" ? "host" : "join", ver: VERSION };
+      if (extra) {
+        if (wantedRole === "host") first.name = extra.name;
+        else first.room = extra.room;
+        if (extra.pw) first.pw = extra.pw;
+      }
+      send(first);
     });
 
     sock.setEncoding("utf8");
@@ -964,6 +1775,11 @@
     });
 
     var me = sock;
+    // Ulaşılamayan adreste işletim sistemi dakikalarca beklemesin
+    connTimer = setTimeout(function () {
+      connTimer = null;
+      if (sock === me && !me.__open) disconnect(t("mConnErr", "ETIMEDOUT"));
+    }, 10000);
     sock.on("error", function (e) {
       if (sock !== me) return; // eski (kapatılmış) bağlantının geç gelen olayı yeni bağlantıyı bozmasın
       disconnect(t("mConnErr", (e && e.code ? e.code : e)));
@@ -982,7 +1798,12 @@
         hostSeq = 0;
         setNoBlurPause(true);
         startGameIntervals();
-        say(role === "host" ? t("mHostReady") : t("mGuestJoined"));
+        if (role === "host" && !onlineMode) startAdvertise(); // UDP duyurusu sadece yerel ağ lobisinde
+        say(
+          role === "host"
+            ? onlineMode ? t("mOnlineHostReady", cleanLobbyName(m.name) || "?") : t("mHostReady")
+            : t("mGuestJoined")
+        );
         break;
       case "peer":
         peerHere = true;
@@ -1006,7 +1827,7 @@
         }
         break;
       case "err":
-        disconnect(t("mErrPrefix", m.msg));
+        disconnect(t("mErrPrefix", m.msg), m.fatal ? true : undefined); // fatal: yeniden denemenin anlamı yok
         break;
       case "in":
         if (role === "host") onRemoteInput(m);
@@ -2817,7 +3638,16 @@
       ".onl-select option{background:#1a1b1d;color:#eee;}",
       ".onl-off{width:100%;margin-top:6px;}",
       ".onl-foot{margin-top:10px;color:#7d8085;font-size:11.5px;line-height:1.5;}",
-      ".onl-foot kbd{font:inherit;color:#a9acb1;}"
+      ".onl-foot kbd{font:inherit;color:#a9acb1;}",
+      ".onl-lobbies{max-height:170px;overflow-y:auto;}",
+      ".onl-lobby{display:flex;align-items:center;gap:8px;margin:0 0 5px;padding:6px 8px;background:#1f2124;border:1px solid #45484d;border-radius:3px;}",
+      ".onl-lb-i{flex:1;min-width:0;}",
+      ".onl-lb-n{display:block;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}",
+      ".onl-lb-s{display:block;color:#8c8f94;font-size:11.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}",
+      ".onl-lb-c{flex:none;color:#b5b8bd;}",
+      ".onl-lb-btn{flex:none;padding:4px 12px;}",
+      ".onl-btn:disabled{opacity:.4;cursor:default;}",
+      ".onl-btn:disabled:hover{background:#3b3e42;}"
     ].join("\n");
     document.head.appendChild(st);
   }
@@ -2843,12 +3673,37 @@
   }
 
   function buildUI() {
+    var statusWrap = document.createElement("div");
+    statusWrap.style.cssText =
+      "position:fixed;left:8px;bottom:8px;z-index:99998;display:flex;align-items:center;gap:6px;";
+    document.body.appendChild(statusWrap);
+
     statusEl = document.createElement("div");
     statusEl.style.cssText =
-      "position:fixed;left:8px;bottom:8px;z-index:99998;font:12px sans-serif;color:#fff;" +
+      "font:12px sans-serif;color:#fff;" +
       "background:rgba(0,0,0,.55);padding:3px 8px;border-radius:4px;pointer-events:none";
     statusEl.textContent = t("statusLoaded", VERSION);
-    document.body.appendChild(statusEl);
+    statusWrap.appendChild(statusEl);
+
+    var lobbyBtn = document.createElement("button");
+    lobbyBtn.id = "onl-lobby-btn";
+    lobbyBtn.textContent = "🔍 " + t("secLobby");
+    lobbyBtn.style.cssText =
+      "font:11px sans-serif;color:#eee;background:rgba(30,60,100,.85);border:1px solid rgba(100,160,255,.45);" +
+      "border-radius:4px;padding:3px 9px;cursor:pointer;white-space:nowrap;";
+    lobbyBtn.title = t("secLobby") + " (F9)";
+    lobbyBtn.tabIndex = -1;
+    lobbyBtn.onmousedown = function (e) { e.preventDefault(); };
+    lobbyBtn.onmouseover = function () { lobbyBtn.style.background = "rgba(50,90,150,.95)"; };
+    lobbyBtn.onmouseout = function () { lobbyBtn.style.background = "rgba(30,60,100,.85)"; };
+    lobbyBtn.onclick = function () {
+      if (panelEl) {
+        panelEl.style.display = panelEl.style.display === "none" ? "block" : "none";
+        updatePanelState();
+        lobbyTick();
+      }
+    };
+    statusWrap.appendChild(lobbyBtn);
 
     injectMenuStyle();
     panelEl = document.createElement("div");
@@ -2873,6 +3728,7 @@
         if (e.key === "F9" || (e.key === "Tab" && !chatOpen)) {
           panelEl.style.display = panelEl.style.display === "none" ? "block" : "none";
           updatePanelState();
+          lobbyTick();
           e.preventDefault();
         }
         if (e.key === "Enter" && connected && peerHere && !chatOpen && panelEl.style.display === "none") {
@@ -2924,7 +3780,23 @@
           "<button class='onl-x' id='onl-close' title='" + t("closeTitle") + "'>✕</button></div>" +
         "<div class='onl-chip'><span id='onl-state'></span></div>" +
 
+        "<div id='onl-lobsec'>" +
+          "<div class='onl-sec'>" + t("secLobby") + "</div>" +
+          "<div id='onl-lobbies' class='onl-lobbies'></div>" +
+          "<div id='onl-lobdiag' class='onl-rd' style='margin-top:4px'></div>" +
+          "<div id='onl-srvdiag' class='onl-rd'></div>" +
+        "</div>" +
+
         "<div class='onl-sec'>" + t("secConn") + "</div>" +
+        "<label class='onl-lbl' for='onl-lname'>" + t("lblLobbyName") + "</label>" +
+        "<input id='onl-lname' class='onl-in' maxlength='24' spellcheck='false' autocomplete='off' style='margin-bottom:8px'>" +
+        "<label class='onl-lbl' for='onl-mode'>" + t("lblMode") + "</label>" +
+        "<select id='onl-mode' class='onl-in onl-select' style='margin-bottom:8px;width:100%'>" +
+          "<option value='online'>" + t("modeOnline") + "</option>" +
+          "<option value='lan'>" + t("modeLan") + "</option>" +
+        "</select>" +
+        "<label class='onl-lbl' for='onl-pw'>" + t("lblPw") + "</label>" +
+        "<input id='onl-pw' class='onl-in' type='password' maxlength='32' spellcheck='false' autocomplete='off' style='margin-bottom:8px'>" +
         "<label class='onl-lbl' for='onl-addr'>" + t("lblAddr") + "</label>" +
         "<input id='onl-addr' class='onl-in' placeholder='127.0.0.1:7777' spellcheck='false' autocomplete='off'>" +
         "<div class='onl-btns'>" +
@@ -2940,6 +3812,9 @@
           "<span class='onl-rd'>" + t("setCompDesc") + "</span></span></label>" +
         "<label class='onl-row'><input type='checkbox' id='onl-auto'><span><span class='onl-rt'>" + t("setAuto") + "</span>" +
           "<span class='onl-rd'>" + t("setAutoDesc") + "</span></span></label>" +
+        "<div class='onl-block'><span class='onl-rt'>" + t("setSrv") + "</span>" +
+          "<span class='onl-rd'>" + t("setSrvDesc") + "</span>" +
+          "<input id='onl-srv' class='onl-in' placeholder='203.0.113.5:7780' spellcheck='false' autocomplete='off'></div>" +
         "<div class='onl-block'><div class='onl-slhead'><span class='onl-rt'>" + t("setCap") + "</span>" +
           "<span class='onl-val' id='onl-capv'></span></div>" +
           "<span class='onl-rd'>" + t("setCapDesc") + "</span>" +
@@ -2962,8 +3837,38 @@
     var addr = panelEl.querySelector("#onl-addr");
     addr.value = loadSaved("addr", DEFAULT_SERVER);
 
+    // Online sunucu ayarları (v0.9.11)
+    var modeBox = panelEl.querySelector("#onl-mode");
+    var pwBox = panelEl.querySelector("#onl-pw"); // şifre kaydedilmez, sadece bu oturumda
+    var srvBox = panelEl.querySelector("#onl-srv");
+    srvBox.value = loadSaved("srv", ONLINE_SERVER_DEFAULT);
+    modeBox.value = loadSaved("mode", srvBox.value.trim() ? "online" : "lan") === "lan" ? "lan" : "online";
+    srvDiagEl = panelEl.querySelector("#onl-srvdiag");
+    srvBox.oninput = function () {
+      save("srv", srvBox.value.trim());
+      onlStop(); // adres değişti: yeni adrese yeniden bağlan
+      onlRetryAt = 0;
+      onlErr = "";
+    };
+
+    // Lobi listesi ve lobi adı (v0.9.9)
+    lobbyListEl = panelEl.querySelector("#onl-lobbies");
+    lobbySecEl = panelEl.querySelector("#onl-lobsec");
+    lobbyDiagEl = panelEl.querySelector("#onl-lobdiag");
+    lastLobbySig = "";
+    var lname = panelEl.querySelector("#onl-lname");
+    lname.value = loadSaved("lname", defaultLobbyName());
+    lname.oninput = function () {
+      save("lname", cleanLobbyName(lname.value));
+    };
+    lobbyTick();
+
     // Başlat'a basarsan arkadaşının bağlanacağı adres (bu bilgisayarın yerel IP'si + port)
     function showHostIp() {
+      if (modeBox.value === "online") {
+        panelEl.querySelector("#onl-hostip").textContent = t("hostHintOnline");
+        return;
+      }
       var p = parseInt(String(addr.value).split(":")[1] || "7777", 10);
       if (isNaN(p) || p < 1 || p > 65535) p = 7777;
       var ips = lanAddresses();
@@ -2973,6 +3878,11 @@
     }
     showHostIp();
     addr.addEventListener("input", showHostIp);
+    modeBox.onchange = function () {
+      save("mode", modeBox.value);
+      showHostIp();
+      modeBox.blur();
+    };
 
     var altBox = panelEl.querySelector("#onl-alt");
     altBox.checked = altKeysOn;
@@ -3025,9 +3935,11 @@
       populateMenu();          // menüyü yeni dilde yeniden kur
       updatePanelState();
       if (chatInputEl) chatInputEl.placeholder = t("chatPlaceholder");
+      var lb = document.getElementById("onl-lobby-btn");
+      if (lb) { lb.textContent = "🔍 " + t("secLobby"); lb.title = t("secLobby") + " (F9)"; }
     };
 
-    [addr, capBox].forEach(function (el) {
+    [addr, capBox, lname, srvBox, pwBox].forEach(function (el) {
       ["keydown", "keyup", "keypress"].forEach(function (ev) {
         el.addEventListener(ev, function (e) {
           e.stopPropagation();
@@ -3036,8 +3948,17 @@
     });
 
     function go(r) {
-      save("addr", addr.value);
-      connect(addr.value, r);
+      if (r === "host" && modeBox.value === "online") {
+        var sa = srvBox.value.trim();
+        if (!sa) {
+          say(t("mSrvNoAddr")); // menü açık kalsın, kullanıcı adresi girsin
+          return;
+        }
+        connect(sa, "host", { online: true, name: currentLobbyName(), pw: pwBox.value });
+      } else {
+        save("addr", addr.value);
+        connect(addr.value, r);
+      }
       panelEl.style.display = "none";
       if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
     }
@@ -3097,6 +4018,7 @@
     setInterval(sendPing, 1000);
     setInterval(heartbeat, 2000);
     setInterval(refreshExtra, 500);
+    setInterval(lobbyTick, 500);
     console.info("[ONLINE] mod " + VERSION + " yüklendi");
   }
 
