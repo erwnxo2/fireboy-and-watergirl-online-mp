@@ -1,4 +1,11 @@
-/* Ateş ve Su - Online Mod (prototip v0.9.7 - OYUN OLAYLARI SENKRONU, v0.9.6 donma düzeltmesi, TR/EN)
+/* Ateş ve Su - Online Mod (prototip v0.9.8 - SENKRON KONTROLÜ, v0.9.7 oyun olayları senkronu, v0.9.6 donma düzeltmesi, TR/EN)
+ *
+ * v0.9.8: SENKRON KONTROLÜ (kendini onaran). Host saniyede bir küçük bir özet yollar (ev:"chk"): aygıt durumları, çıkış kapıları,
+ *   hangi elmasların alınmış olduğu. Aynı kanaldan, olayların hemen arkasından gittiği için guest o ana kadarki olayları
+ *   işlemiş olur; guest kendi durumunu özetle karşılaştırır. Fark iki kontrol üst üste (~2 sn) sürerse guest host'tan tam durumu
+ *   ister (rs) ve ekranda "senkron farkı bulundu" yazar; düzelince "senkron düzeldi" yazar. 5 denemede düzelmezse uyarır ve
+ *   30 sn'de bir dener. Farklar kayda "SENKRON KONTROL" satırıyla yazılır (F7 ile kayıt dosyası). Toleranslar: aygıt durumu 0.1.
+ *   Bu sürüm gerçek oyunla denenmedi; sahte oyun nesneleriyle mantık testi yapıldı. İki taraf da yeni dosyayı kullanmalı.
  *
  * v0.9.7: PLATFORM / DÜĞME / ŞALTER / ELMAS / ÇIKIŞ KAPISI SENKRONU (oyunun kendi kodu okunarak yazıldı).
  *   Oyunda platformlar, kapılar vb. "durum" (state) ile çalışır; durumu düğme/şalter belirler (MechManager.deviceChanged).
@@ -36,6 +43,9 @@
  * Not (lobi kodu kaldırıldı): Artık oda kodu yok. Ateş "Başlat" der, Su aynı ağdaki adresi yazıp "Bağlan" der.
  *       Sunucu tek oda kullanır. Sohbet arayüzü sadeleştirildi (düz oyun içi sohbet).
  *
+ * Gömülü sunucu: "Başlat" oyunun içinde sunucuyu açar, server.js'i ayrıca çalıştırmak gerekmez (port doluysa açık olan sunucuya bağlanır).
+ *       Ağ protokolü ve sürüm aynı: misafir tarafında değişiklik yok, server.js hâlâ kullanılabilir.
+ *
  * F9/Tab = menü.  F8 (guest) = zorla eşitle.  F7 = kayda işaret koy.  F6 = oyun yapısını kayda dök.
  *
  * TR/EN dil desteği: Menüden seçilir, localStorage'a yazılır. Ağ protokolü ve fizik mantığı değişmedi.
@@ -43,7 +53,7 @@
 (function () {
   "use strict";
 
-  var VERSION = "v0.9.7";
+  var VERSION = "v0.9.8";
   var DEFAULT_SERVER = "127.0.0.1:7777";
   var SNAP_MS = 33; // 30Hz
   var FAST_MS = 12;
@@ -80,6 +90,11 @@
       btnStartSub: "Ateş olarak",
       btnJoin: "Bağlan",
       btnJoinSub: "Su olarak",
+      hostHint: "Başlat'a basarsan sunucu bu bilgisayarda açılır; arkadaşın şu adrese bağlanır: {0}",
+      hostHintNone: "Ağ adresin bulunamadı; Windows'ta ipconfig ile IPv4 adresine bak.",
+      mSrvStarted: "sunucu bu bilgisayarda açıldı (port {0}). Arkadaşın şuraya bağlansın: {1}",
+      mSrvUsing: "port {0} zaten kullanımda, çalışan sunucuya bağlanılıyor",
+      mSrvError: "sunucu açılamadı: {0}",
       secSet: "Ayarlar",
       setAlt: "İki tuş takımı",
       setAltDesc: "Ok tuşları ve W A D birlikte çalışır",
@@ -132,6 +147,9 @@
       mAttachedGuest: "Su: W A D + ok tuşları",
       mSigMismatch: "bölüm uyuşmuyor! (sen: {0} / host: {1}) Bölümü yeniden başlatın.",
       mSyncFix: "senkron düzeltmesi {0}",
+      mChkFix: "senkron farkı bulundu ({0} fark), yeniden eşitleniyor",
+      mChkOk: "senkron düzeldi",
+      mChkStuck: "senkron düzelmiyor; F7'ye basıp fbwg-online-log.txt dosyasını gönder",
       mF6NoLevel: "F6: önce bir bölüme gir",
       mF6Dump: "yapı dökümü kayda yazıldı (F6) → {0}",
       mF7Mark: "işaret kaydedildi (F7) → {0}",
@@ -158,6 +176,11 @@
       btnStartSub: "as Fire",
       btnJoin: "Connect",
       btnJoinSub: "as Water",
+      hostHint: "Start opens the server on this computer; your friend connects to: {0}",
+      hostHintNone: "No network address found; check your IPv4 address with ipconfig.",
+      mSrvStarted: "server started on this computer (port {0}). Your friend connects to: {1}",
+      mSrvUsing: "port {0} is already in use, connecting to the running server",
+      mSrvError: "could not start the server: {0}",
       secSet: "Settings",
       setAlt: "Both key sets",
       setAltDesc: "Arrow keys and W A D work together",
@@ -210,6 +233,9 @@
       mAttachedGuest: "Water: W A D + arrow keys",
       mSigMismatch: "level mismatch! (you: {0} / host: {1}) Restart the level.",
       mSyncFix: "sync fix {0}",
+      mChkFix: "sync difference found ({0}), resyncing",
+      mChkOk: "sync restored",
+      mChkStuck: "sync is not recovering; press F7 and send fbwg-online-log.txt",
       mF6NoLevel: "F6: enter a level first",
       mF6Dump: "level structure dumped to log (F6) → {0}",
       mF7Mark: "marker saved (F7) → {0}",
@@ -552,7 +578,284 @@
     } catch (e) {}
   }
 
+  /* ---------------- Gömülü sunucu (server.js yerine) ---------------- */
+  // BEGIN-EMB
+  // "Başlat" deyince sunucu bu oyunun içinde açılır; ayrıca server.js çalıştırmak gerekmez. Mantık server.js ile aynı:
+  // tek lobi, sürüm kontrolü, heartbeat, mesaj sınırı, yavaş karşı tarafa snapshot atlama.
+  var EMB_MAX_LINE = 300000;
+  var EMB_MAX_BUF = 1000000;
+  var EMB_MAX_MSG_PER_SEC = 400;
+  var EMB_IDLE_MS = 10000;
+  var EMB_HB_MS = 2000;
+  var EMB_SNAP_BACKLOG = 128 * 1024;
+  var EMB_KILL_BACKLOG = 4 * 1024 * 1024;
+  var EMB_MAX_BAD_JOINS = 5;
+  var EMB_RELAY = { in: 1, snap: 1, go: 1, over: 1, ping: 1, pong: 1, rs: 1, ev: 1, chat: 1 };
+  var EMB_FAST = { in: 1, snap: 1, over: 1, ping: 1, pong: 1, rs: 1, ev: 1 }; // doğrulama gerekmeyenler: JSON.parse yapmadan aktar
+  var EMB_GO_STATES = { level: 1, levelMenu: 1, menu: 1 };
+  var embSrv = null;
+  var embSocks = null;
+  var embRoom = null; // { host, guest, ver }
+  var embTimer = null;
+  var embPort = 0;
+  var embKeep = false; // connect() içinden yapılan iç disconnect sunucuyu kapatmasın
+  var connectAttemptId = 0;
+
+  function embSend(sk, obj) {
+    if (sk && !sk.destroyed) sk.write(JSON.stringify(obj) + "\n");
+  }
+
+  function embBacklog(sk) {
+    return sk.writableLength !== undefined ? sk.writableLength : sk.bufferSize || 0;
+  }
+
+  function embOther(sk) {
+    if (!embRoom || !sk.__role) return null;
+    return sk.__role === "host" ? embRoom.guest : embRoom.host;
+  }
+
+  function embLeave(sk) {
+    var room = embRoom;
+    if (!room || !sk.__role) return;
+    if (sk.__role === "host" && room.host === sk) {
+      if (room.guest) {
+        embSend(room.guest, { t: "gone" });
+        room.guest.__role = null;
+      }
+      embRoom = null;
+      log("gömülü sunucu: lobi kapandı");
+    } else if (room.guest === sk) {
+      room.guest = null;
+      embSend(room.host, { t: "gone" });
+      log("gömülü sunucu: misafir ayrıldı");
+    }
+    sk.__role = null;
+  }
+
+  function embGoValid(msg) {
+    if (!EMB_GO_STATES[msg.s]) return false;
+    if (msg.p !== undefined && msg.p !== null) {
+      if (typeof msg.p !== "object") return false;
+      if (msg.p.filename !== undefined) {
+        var f = msg.p.filename;
+        if (typeof f !== "string" || f.length > 200) return false;
+        if (!SAFE_NAME.test(f) || f.indexOf("..") >= 0) return false;
+      }
+    }
+    return true;
+  }
+
+  function embBadJoin(sk, text) {
+    embSend(sk, { t: "err", msg: text });
+    sk.__bad++;
+    if (sk.__bad >= EMB_MAX_BAD_JOINS) sk.destroy();
+  }
+
+  function embRelayRaw(sk, type, line) {
+    var peer = embOther(sk);
+    if (!peer || peer.destroyed) return;
+    var bl = embBacklog(peer);
+    if (bl > EMB_KILL_BACKLOG) {
+      log("gömülü sunucu: karşı taraf çok geride, bağlantı kesiliyor");
+      peer.destroy();
+      return;
+    }
+    if (type === "snap" && bl > EMB_SNAP_BACKLOG) return; // eskiyen snapshot'ı atla
+    peer.write(line + "\n");
+  }
+
+  function embHandle(sk, msg, line) {
+    if (!msg || typeof msg !== "object" || typeof msg.t !== "string") return;
+    if (msg.t === "hb") return;
+    if (msg.t === "host" || msg.t === "join") {
+      if (sk.__role) return embSend(sk, { t: "err", msg: "Zaten bir lobidesin" });
+      var ver = String(msg.ver === undefined ? "?" : msg.ver).slice(0, 24);
+      if (msg.t === "host") {
+        if (embRoom) return embSend(sk, { t: "err", msg: "Bu lobi zaten kullanımda" });
+        embRoom = { host: sk, guest: null, ver: ver };
+        sk.__role = "host";
+        embSend(sk, { t: "ok", role: "host" });
+        log("gömülü sunucu: lobi açıldı (sürüm " + ver + ")");
+        return;
+      }
+      if (!embRoom) return embBadJoin(sk, "Henüz açık bir lobi yok (oda yok)");
+      if (embRoom.ver !== ver) {
+        return embSend(sk, {
+          t: "err",
+          msg: "Mod sürümleri uyuşmuyor (host: " + embRoom.ver + ", sen: " + ver + "). İkiniz de aynı online.js'i kullanın."
+        });
+      }
+      if (embRoom.guest) return embSend(sk, { t: "err", msg: "Lobi dolu" });
+      embRoom.guest = sk;
+      sk.__role = "guest";
+      embSend(sk, { t: "ok", role: "guest" });
+      embSend(embRoom.host, { t: "peer" });
+      embSend(sk, { t: "peer" });
+      log("gömülü sunucu: misafir katıldı");
+      return;
+    }
+    if (!EMB_RELAY[msg.t]) return;
+    if (msg.t === "go" && !embGoValid(msg)) return;
+    if (msg.t === "chat" && (typeof msg.msg !== "string" || msg.msg.length > 200)) return;
+    embRelayRaw(sk, msg.t, line);
+  }
+
+  function embOnConnection(sk) {
+    if (!embSocks) {
+      sk.destroy();
+      return;
+    }
+    sk.setNoDelay(true);
+    sk.setKeepAlive(true, 5000);
+    sk.setEncoding("utf8");
+    sk.__role = null;
+    sk.__bad = 0;
+    sk.__seen = Date.now();
+    sk.__winStart = Date.now();
+    sk.__winCount = 0;
+    embSocks.add(sk);
+    var b = "";
+    sk.on("data", function (chunk) {
+      sk.__seen = Date.now();
+      b += chunk;
+      if (b.length > EMB_MAX_BUF) {
+        sk.destroy();
+        return;
+      }
+      var i;
+      while ((i = b.indexOf("\n")) >= 0) {
+        var line = b.slice(0, i);
+        b = b.slice(i + 1);
+        if (!line || line.length > EMB_MAX_LINE) continue;
+        var now = Date.now();
+        if (now - sk.__winStart >= 1000) {
+          sk.__winStart = now;
+          sk.__winCount = 0;
+        }
+        if (++sk.__winCount > EMB_MAX_MSG_PER_SEC) continue;
+        // Hızlı yol: {"t":"snap",...} gibi satırlarda tür baştan okunur, JSON.parse yapılmaz (host'un işlemcisini yormasın)
+        if (line.charCodeAt(0) === 123 && line.indexOf('{"t":"') === 0) {
+          var q = line.indexOf('"', 6);
+          var ty = q > 6 ? line.slice(6, q) : "";
+          if (EMB_FAST[ty]) {
+            embRelayRaw(sk, ty, line);
+            continue;
+          }
+        }
+        var msg;
+        try {
+          msg = JSON.parse(line);
+        } catch (e) {
+          continue;
+        }
+        embHandle(sk, msg, line);
+      }
+    });
+    sk.on("close", function () {
+      if (embSocks) embSocks.delete(sk);
+      embLeave(sk);
+    });
+    sk.on("error", function () {});
+  }
+
+  function embBeat() {
+    if (!embSocks) return;
+    var now = Date.now();
+    embSocks.forEach(function (sk) {
+      if (now - sk.__seen > EMB_IDLE_MS) sk.destroy();
+      else embSend(sk, { t: "hb" });
+    });
+  }
+
+  // cb("started") | cb("inuse") | cb("error", err)
+  function startEmbeddedServer(port, cb) {
+    if (embSrv && embPort !== port) stopEmbedded();
+    if (embSrv) {
+      cb("started");
+      return;
+    }
+    var net;
+    try {
+      net = window.nodeRequire("net");
+    } catch (e) {
+      cb("error", e);
+      return;
+    }
+    var done = false;
+    var srv = net.createServer(embOnConnection);
+    srv.on("error", function (e) {
+      if (!done) {
+        done = true;
+        cb(e && e.code === "EADDRINUSE" ? "inuse" : "error", e);
+      } else {
+        log("GÖMÜLÜ SUNUCU HATASI: " + (e && e.message ? e.message : e));
+      }
+    });
+    try {
+      srv.listen(port, "0.0.0.0", function () {
+        if (done) return;
+        done = true;
+        embSrv = srv;
+        embPort = port;
+        embSocks = new Set();
+        embRoom = null;
+        embTimer = setInterval(embBeat, EMB_HB_MS);
+        log("gömülü sunucu açıldı, port " + port);
+        cb("started");
+      });
+    } catch (e) {
+      if (!done) {
+        done = true;
+        cb("error", e);
+      }
+    }
+  }
+
+  function stopEmbedded() {
+    if (embTimer) {
+      clearInterval(embTimer);
+      embTimer = null;
+    }
+    var srv = embSrv;
+    var socks = embSocks;
+    embSrv = null;
+    embSocks = null;
+    embRoom = null;
+    embPort = 0;
+    if (socks) {
+      socks.forEach(function (sk) {
+        try {
+          sk.destroy();
+        } catch (e) {}
+      });
+    }
+    if (srv) {
+      try {
+        srv.close();
+      } catch (e) {}
+      log("gömülü sunucu kapatıldı");
+    }
+  }
+
+  // Bu bilgisayarın yerel ağ (IPv4) adresleri; arkadaşına söyleyeceğin adres
+  function lanAddresses() {
+    var out = [];
+    try {
+      var nets = window.nodeRequire("os").networkInterfaces();
+      Object.keys(nets).forEach(function (k) {
+        (nets[k] || []).forEach(function (a) {
+          if ((a.family === "IPv4" || a.family === 4) && !a.internal) out.push(a.address);
+        });
+      });
+    } catch (e) {}
+    return out;
+  }
+  // END-EMB
+
   function disconnect(reason, manual) {
+    connectAttemptId++; // bekleyen (sunucu açılmasını bekleyen) bağlantı denemesi iptal
+    if (!embKeep) stopEmbedded();
+    embKeep = false;
     setNoBlurPause(false);
     stopGameIntervals();
     if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
@@ -584,7 +887,9 @@
   function connect(addr, wantedRole) {
     reconnectAddr = addr;
     reconnectRole = wantedRole;
+    embKeep = wantedRole === "host"; // host yeniden bağlanırken sunucuyu kapatma; misafire geçerken kapat
     if (sock) disconnect();
+    embKeep = false;
     var net;
     try {
       net = window.nodeRequire("net");
@@ -595,7 +900,31 @@
     var parts = String(addr).trim().split(":");
     var host = parts[0] || "127.0.0.1";
     var port = parseInt(parts[1] || "7777", 10);
+    if (isNaN(port) || port < 1 || port > 65535) port = 7777;
 
+    if (wantedRole === "host") {
+      // Host: sunucu bu bilgisayarda açılır (adres kutusundaki sadece port kullanılır), kendimize bağlanırız
+      var attempt = ++connectAttemptId;
+      startEmbeddedServer(port, function (st, err) {
+        if (attempt !== connectAttemptId) return; // bu arada iptal edildi ya da yeniden bağlanıldı
+        if (st === "error") {
+          say(t("mSrvError", err && err.code ? err.code : err && err.message ? err.message : err));
+          return;
+        }
+        if (st === "inuse") {
+          say(t("mSrvUsing", port)); // port zaten dolu (örn. server.js açık): çalışan sunucuya bağlan
+        } else {
+          var ips = lanAddresses();
+          say(t("mSrvStarted", port, ips.length ? ips[0] + ":" + port : "?"));
+        }
+        openSocket(net, "127.0.0.1", port, wantedRole);
+      });
+      return;
+    }
+    openSocket(net, host, port, wantedRole);
+  }
+
+  function openSocket(net, host, port, wantedRole) {
     lastRecv = Date.now();
     lastSeq = -1;
     hostSeq = 0;
@@ -634,11 +963,13 @@
       }
     });
 
+    var me = sock;
     sock.on("error", function (e) {
+      if (sock !== me) return; // eski (kapatılmış) bağlantının geç gelen olayı yeni bağlantıyı bozmasın
       disconnect(t("mConnErr", (e && e.code ? e.code : e)));
     });
     sock.on("close", function () {
-      if (sock) disconnect(t("mConnLost"));
+      if (sock === me) disconnect(t("mConnLost"));
     });
   }
 
@@ -1372,6 +1703,11 @@
     devLast = [];
     doorLast = [-2, -2];
     fullEv = true; // host: yeni bölümde tüm durumu bir kez yolla
+    chkBad = 0;
+    chkResyncs = 0;
+    chkHadFix = false;
+    chkStuckSaid = false;
+    lastChkAt = 0;
     if (role === "guest") guestHookAll(lv); // guest: yerel karar mekanizmalarını hemen sustur
     detailLogs = 0;
     lastDetail = 0;
@@ -1848,6 +2184,12 @@
       send({ t: "ev", ev: "dias", a: codes });
       evSent++;
     }
+    if (!full && now - lastChkAt >= CHK_MS) {
+      lastChkAt = now;
+      var dg = evDigest(lv, true);
+      send({ t: "ev", ev: "chk", g: sig, s: dg.s, o: dg.o, a: dg.a });
+      evSent++;
+    }
     if (full) evLog("TAM DURUM yollandı: aygıt=" + out.length + " elmas=" + (lv.diamonds ? lv.diamonds.length : 0));
   }
 
@@ -1957,6 +2299,92 @@
     evApplied++;
   }
 
+  // BEGIN-CHK
+  /* ---------------- Senkron kontrolü (v0.9.8) ---------------- */
+  var CHK_MS = 1000; // host: özet gönderme aralığı
+  var CHK_TOL = 2; // aygıt durumu farkı toleransı (1 birim = 0.05)
+  var lastChkAt = 0;
+  var chkBad = 0; // üst üste kaç kontrolde fark çıktı
+  var chkResyncs = 0;
+  var lastChkResync = 0;
+  var chkHadFix = false;
+  var chkStuckSaid = false;
+
+  // Özet: aygıt durumları (çift sayı: [indeks, durum*20]), kapılar, elmaslar ("1" duruyor, "0" alınmış).
+  // Host kendi "son gönderilen" değerlerinden, guest kendi gerçek durumundan üretir.
+  function evDigest(lv, host) {
+    var s = [];
+    var objs = lv.objects || [];
+    for (var i = 0; i < objs.length; i++) {
+      var st = host ? devLast[i] : objs[i] && objs[i].state;
+      if (typeof st !== "number" || st !== st) continue;
+      s.push(i, Math.round(st * 20));
+    }
+    var o = host
+      ? [doorLast[0], doorLast[1]]
+      : [lv.door1 ? (lv.door1.isOpen ? 1 : 0) : -1, lv.door2 ? (lv.door2.isOpen ? 1 : 0) : -1];
+    var a = "";
+    var ds = lv.diamonds || [];
+    for (var k = 0; k < ds.length; k++) a += ds[k] && ds[k].data && ds[k].data.alive === false ? "0" : "1";
+    return { s: s, o: o, a: a };
+  }
+
+  function checkEvDigest(m) {
+    var lv = level;
+    if (role !== "guest" || !attached || !lv || m.g !== sig) return; // bölüm uyuşmuyorsa ayrı uyarı zaten var
+    var g = getGame();
+    if (!g || g.level !== lv || (g.state && g.state.fading)) return;
+    var mine = evDigest(lv, false);
+    var diffs = [];
+    var hs = Array.isArray(m.s) ? m.s : [];
+    var mm = {};
+    var j;
+    for (j = 0; j < mine.s.length; j += 2) mm[mine.s[j]] = mine.s[j + 1];
+    for (j = 0; j + 1 < hs.length; j += 2) {
+      var gv = mm[hs[j]];
+      if (gv === undefined || Math.abs(gv - hs[j + 1]) > CHK_TOL) diffs.push("aygıt" + hs[j] + ":" + hs[j + 1] + "/" + gv);
+    }
+    for (var dr = 0; dr < 2; dr++) {
+      var hv = m.o && m.o[dr];
+      if (hv >= 0 && mine.o[dr] >= 0 && hv !== mine.o[dr]) diffs.push("kapı" + dr + ":" + hv + "/" + mine.o[dr]);
+    }
+    var ha = String(m.a || "");
+    if (ha.length !== mine.a.length) {
+      diffs.push("elmasSayı:" + ha.length + "/" + mine.a.length);
+    } else {
+      for (var e = 0; e < ha.length; e++) if (ha.charAt(e) !== mine.a.charAt(e)) diffs.push("elmas" + e + ":" + ha.charAt(e) + "/" + mine.a.charAt(e));
+    }
+    var now = Date.now();
+    if (!diffs.length) {
+      chkBad = 0;
+      if (chkHadFix) {
+        chkHadFix = false;
+        chkResyncs = 0;
+        chkStuckSaid = false;
+        say(t("mChkOk"));
+        log("SENKRON KONTROL: düzeldi");
+      }
+      return;
+    }
+    chkBad++;
+    var gap = chkResyncs >= 5 ? 30000 : 4000;
+    if (chkBad >= 2 && now - lastChkResync >= gap) {
+      chkBad = 0;
+      lastChkResync = now;
+      chkResyncs++;
+      chkHadFix = true;
+      send({ t: "rs" });
+      if (chkResyncs === 5 && !chkStuckSaid) {
+        chkStuckSaid = true;
+        say(t("mChkStuck"));
+      } else {
+        say(t("mChkFix", diffs.length));
+      }
+      log("SENKRON KONTROL: " + diffs.length + " fark, yeniden eşitleme istendi (#" + chkResyncs + "): " + diffs.slice(0, 8).join(" "));
+    }
+  }
+  // END-CHK
+
   function onHostEvent(m) {
     if (!attached || !level) return;
     var g = getGame();
@@ -1972,6 +2400,8 @@
         evLog("elmas alındı #" + m.i);
       } else if (m.ev === "dias" && Array.isArray(m.a)) {
         for (var k = 0; k < m.a.length; k++) if (m.a[k] !== "0") applyDiamond(lv, k, String(m.a[k]));
+      } else if (m.ev === "chk") {
+        checkEvDigest(m);
       } else if (m.ev === "dr" && Array.isArray(m.o)) {
         if (lv.door1 && lv.door1.__onlSetOpen && m.o[0] >= 0) lv.door1.__onlSetOpen(m.o[0]);
         if (lv.door2 && lv.door2.__onlSetOpen && m.o[1] >= 0) lv.door2.__onlSetOpen(m.o[1]);
@@ -2349,80 +2779,45 @@
     var st = document.createElement("style");
     st.id = "onl-style";
     st.textContent = [
-      ".onl-wrap{position:fixed;left:0;top:0;right:0;bottom:0;z-index:99999;display:none;background:rgba(4,6,14,.62);",
-      "  font:14px 'Segoe UI','Segoe UI Emoji','Apple Color Emoji','Noto Color Emoji',system-ui,sans-serif;color:#e9edff;}",
-      ".onl-card{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:390px;max-width:94vw;",
-      "  max-height:92vh;overflow-y:auto;box-sizing:border-box;padding:16px 18px 12px;border-radius:22px;",
-      "  background:linear-gradient(165deg,#1a1f36 0%,#0f1222 100%);border:1px solid rgba(255,255,255,.1);",
-      "  box-shadow:0 24px 60px rgba(0,0,0,.65),0 0 0 1px rgba(0,0,0,.4);animation:onlPop .18s ease-out;}",
-      ".onl-card::-webkit-scrollbar{width:6px}",
-      ".onl-card::-webkit-scrollbar-thumb{background:rgba(255,255,255,.2);border-radius:3px}",
-      ".onl-head{display:flex;align-items:center;gap:12px;margin-bottom:12px;}",
-      ".onl-logo{flex:none;display:flex;align-items:center;justify-content:center;gap:1px;width:46px;height:46px;",
-      "  border-radius:14px;background:linear-gradient(135deg,rgba(255,130,70,.22),rgba(60,170,255,.22));",
-      "  border:1px solid rgba(255,255,255,.14);}",
-      ".onl-title{flex:1;min-width:0;}",
-      ".onl-t1{font-size:19px;font-weight:800;letter-spacing:.2px;line-height:1.15;",
-      "  background:linear-gradient(90deg,#ffa36b,#7fd6ff);-webkit-background-clip:text;background-clip:text;color:transparent;}",
-      ".onl-t2{font-size:11.5px;color:rgba(233,237,255,.5);margin-top:2px;}",
-      ".onl-x{flex:none;width:30px;height:30px;border-radius:50%;border:none;cursor:pointer;color:rgba(255,255,255,.7);",
-      "  background:rgba(255,255,255,.08);font-size:13px;line-height:30px;padding:0;transition:background .15s;}",
-      ".onl-x:hover{background:rgba(255,255,255,.18);color:#fff;}",
-      ".onl-chip{display:flex;align-items:center;gap:7px;padding:5px 11px;border-radius:999px;margin-bottom:6px;",
-      "  background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.1);font-size:12.5px;font-weight:600;}",
-      ".onl-chip b{width:8px;height:8px;border-radius:50%;background:#7a8099;flex:none;}",
-      ".onl-chip.wait b{background:#ffc94d;box-shadow:0 0 8px rgba(255,201,77,.7);}",
-      ".onl-chip.on b{background:#4be38a;box-shadow:0 0 8px rgba(75,227,138,.75);}",
-      ".onl-sec{font-size:11px;font-weight:700;letter-spacing:1.3px;text-transform:uppercase;color:rgba(233,237,255,.42);",
-      "  margin:14px 2px 6px;}",
-      ".onl-sec:first-of-type{margin-top:0;}",
-      ".onl-lbl{display:block;font-size:12px;color:rgba(233,237,255,.62);margin:7px 2px 4px;}",
-      ".onl-in{width:100%;box-sizing:border-box;height:38px;padding:0 13px;border-radius:12px;outline:none;color:#fff;",
-      "  font:inherit;background:rgba(255,255,255,.06);border:1.5px solid rgba(255,255,255,.12);",
-      "  transition:border-color .15s,box-shadow .15s,background .15s;}",
-      ".onl-in:focus{border-color:#6aaeff;background:rgba(255,255,255,.09);box-shadow:0 0 0 3px rgba(80,150,255,.22);}",
-      ".onl-in::placeholder{color:rgba(255,255,255,.3);}",
-      ".onl-btns{display:flex;gap:10px;margin-top:11px;}",
-      ".onl-btn{flex:1;display:flex;align-items:center;justify-content:center;gap:9px;height:46px;border:none;border-radius:14px;",
-      "  cursor:pointer;color:#fff;font:inherit;font-weight:700;text-align:left;padding:0 10px;",
-      "  transition:transform .1s,filter .15s,box-shadow .15s;}",
-      ".onl-btn small{display:block;font-size:11px;font-weight:600;opacity:.82;margin-top:1px;}",
-      ".onl-btn:hover{filter:brightness(1.1);}",
-      ".onl-btn:active{transform:scale(.97);}",
-      ".onl-fire{background:linear-gradient(135deg,#ff9a3c,#f2443a);box-shadow:0 6px 16px rgba(240,80,50,.35);}",
-      ".onl-water{background:linear-gradient(135deg,#3ec6ff,#2f6df0);box-shadow:0 6px 16px rgba(50,130,255,.35);}",
-      ".onl-ghost{width:100%;flex:none;margin-top:12px;height:38px;background:transparent;color:#ff9d9d;box-shadow:none;",
-      "  border:1.5px solid rgba(255,110,110,.4);justify-content:center;}",
-      ".onl-ghost:hover{background:rgba(255,90,90,.12);}",
-      ".onl-row{display:flex;align-items:center;gap:14px;padding:7px 12px;margin-bottom:5px;border-radius:12px;cursor:pointer;",
-      "  background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.07);transition:background .15s;}",
-      ".onl-row:hover{background:rgba(255,255,255,.075);}",
-      ".onl-rtxt{flex:1;min-width:0;}",
-      ".onl-rt{font-weight:600;font-size:13.5px;}",
-      ".onl-rd{font-size:11.5px;color:rgba(233,237,255,.5);margin-top:1px;line-height:1.3;}",
-      ".onl-sw{position:relative;flex:none;width:42px;height:24px;}",
-      ".onl-sw input{position:absolute;left:0;top:0;width:100%;height:100%;margin:0;opacity:0;cursor:pointer;}",
-      ".onl-sw i{position:absolute;left:0;top:0;right:0;bottom:0;border-radius:999px;background:rgba(255,255,255,.16);",
-      "  transition:background .2s;pointer-events:none;}",
-      ".onl-sw i:after{content:'';position:absolute;top:3px;left:3px;width:18px;height:18px;border-radius:50%;background:#fff;",
-      "  box-shadow:0 1px 4px rgba(0,0,0,.4);transition:transform .2s;}",
-      ".onl-sw input:checked+i{background:linear-gradient(90deg,#ff8a50,#3aa8ff);}",
-      ".onl-sw input:checked+i:after{transform:translateX(18px);}",
-      ".onl-sliderbox{padding:8px 13px 10px;border-radius:12px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.07);}",
-      ".onl-slhead{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;}",
-      ".onl-val{font-weight:700;font-size:13px;color:#9fd8ff;}",
-      ".onl-range{-webkit-appearance:none;appearance:none;width:100%;height:6px;border-radius:3px;outline:none;margin:2px 0 0;",
-      "  background:linear-gradient(90deg,#ff8a50 0,#3aa8ff var(--p,30%),rgba(255,255,255,.16) var(--p,30%));cursor:pointer;}",
-      ".onl-range::-webkit-slider-thumb{-webkit-appearance:none;width:18px;height:18px;border-radius:50%;background:#fff;",
-      "  border:none;box-shadow:0 1px 6px rgba(0,0,0,.5);}",
-      ".onl-foot{margin-top:10px;text-align:center;font-size:11px;color:rgba(233,237,255,.38);line-height:1.5;}",
-      ".onl-foot kbd{font:inherit;font-weight:700;color:rgba(233,237,255,.62);padding:1px 6px;border-radius:5px;",
-      "  background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.1);}",
-      ".onl-select{-webkit-appearance:none;appearance:none;background-color:rgba(255,255,255,.06);",
-      "  background-image:linear-gradient(45deg,transparent 50%,rgba(255,255,255,.7) 50%),linear-gradient(135deg,rgba(255,255,255,.7) 50%,transparent 50%);",
-      "  background-position:calc(100% - 16px) 50%,calc(100% - 11px) 50%;background-size:5px 5px,5px 5px;background-repeat:no-repeat;}",
-      ".onl-select option{background:#1a1f36;color:#fff;}",
-      "@keyframes onlPop{from{opacity:0;transform:translate(-50%,-48%) scale(.96);}to{opacity:1;transform:translate(-50%,-50%);}}"
+      ".onl-wrap{position:fixed;left:0;top:0;right:0;bottom:0;z-index:99999;display:none;background:rgba(0,0,0,.5);",
+      "  font:13px 'Segoe UI',Arial,sans-serif;color:#e4e4e4;}",
+      ".onl-card{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:380px;max-width:94vw;",
+      "  max-height:92vh;overflow-y:auto;box-sizing:border-box;padding:0 14px 12px;background:#27292c;",
+      "  border:1px solid #5a5d62;border-radius:4px;box-shadow:0 2px 14px rgba(0,0,0,.6);}",
+      ".onl-title{display:flex;align-items:baseline;gap:8px;margin:0 -14px 10px;padding:8px 8px 8px 14px;",
+      "  background:#1f2124;border-bottom:1px solid #45484d;}",
+      ".onl-title b{font-size:14px;font-weight:600;}",
+      ".onl-ver{flex:1;color:#8c8f94;font-size:12px;}",
+      ".onl-x{border:none;background:none;color:#aaa;font-size:15px;line-height:1;padding:2px 6px;cursor:pointer;}",
+      ".onl-x:hover{color:#fff;background:#b33;}",
+      ".onl-chip{margin:0 0 4px;color:#b5b8bd;}",
+      ".onl-chip.wait{color:#e0b84c;}",
+      ".onl-chip.on{color:#6fcf7f;}",
+      ".onl-sec{margin:14px 0 8px;padding-bottom:3px;border-bottom:1px solid #45484d;font-weight:600;color:#d0d2d6;}",
+      ".onl-lbl{display:block;margin:0 0 4px;color:#b5b8bd;}",
+      ".onl-in{width:100%;box-sizing:border-box;padding:5px 7px;color:#eee;font:inherit;background:#1a1b1d;",
+      "  border:1px solid #606368;border-radius:3px;outline:none;}",
+      ".onl-in:focus{border-color:#8fa8c8;}",
+      ".onl-btns{display:flex;gap:8px;margin-top:8px;}",
+      ".onl-btn{flex:1;padding:6px 10px;color:#eee;font:inherit;background:#3b3e42;border:1px solid #666a70;",
+      "  border-radius:3px;cursor:pointer;text-align:center;}",
+      ".onl-btn:hover{background:#474a4f;}",
+      ".onl-btn:active{background:#33363a;}",
+      ".onl-btn small{display:block;font-size:11px;color:#a0a3a8;}",
+      ".onl-row{display:flex;align-items:flex-start;gap:8px;margin:0 0 7px;cursor:pointer;}",
+      ".onl-row input[type=checkbox]{flex:none;margin:2px 0 0;cursor:pointer;}",
+      ".onl-rt{display:block;}",
+      ".onl-rd{display:block;color:#8c8f94;font-size:12px;}",
+      ".onl-block{margin:0 0 8px;}",
+      ".onl-slhead{display:flex;justify-content:space-between;}",
+      ".onl-val{color:#b5b8bd;}",
+      ".onl-range{width:100%;margin:4px 0 0;cursor:pointer;}",
+      ".onl-langrow{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:0 0 8px;}",
+      ".onl-select{width:auto;cursor:pointer;}",
+      ".onl-select option{background:#1a1b1d;color:#eee;}",
+      ".onl-off{width:100%;margin-top:6px;}",
+      ".onl-foot{margin-top:10px;color:#7d8085;font-size:11.5px;line-height:1.5;}",
+      ".onl-foot kbd{font:inherit;color:#a9acb1;}"
     ].join("\n");
     document.head.appendChild(st);
   }
@@ -2525,47 +2920,38 @@
 
     panelEl.innerHTML =
       "<div class='onl-card'>" +
-        "<div class='onl-head'>" +
-          "<div class='onl-logo'>" + iconSvg("fire", 20) + iconSvg("water", 20) + "</div>" +
-          "<div class='onl-title'><div class='onl-t1'>" + t("menuTitle") + "</div>" +
-          "<div class='onl-t2'>" + t("menuSub", VERSION) + "</div></div>" +
-          "<button class='onl-x' id='onl-close' title='" + t("closeTitle") + "'>✕</button>" +
-        "</div>" +
-        "<div class='onl-chip'><b></b><span id='onl-state'></span></div>" +
+        "<div class='onl-title'><b>" + t("menuTitle") + "</b><span class='onl-ver'>" + t("menuSub", VERSION) + "</span>" +
+          "<button class='onl-x' id='onl-close' title='" + t("closeTitle") + "'>✕</button></div>" +
+        "<div class='onl-chip'><span id='onl-state'></span></div>" +
 
         "<div class='onl-sec'>" + t("secConn") + "</div>" +
         "<label class='onl-lbl' for='onl-addr'>" + t("lblAddr") + "</label>" +
         "<input id='onl-addr' class='onl-in' placeholder='127.0.0.1:7777' spellcheck='false' autocomplete='off'>" +
         "<div class='onl-btns'>" +
-          "<button class='onl-btn onl-fire' id='onl-host'>" + iconSvg("fire", 22, "#fff") +
-            "<span>" + t("btnStart") + "<small>" + t("btnStartSub") + "</small></span></button>" +
-          "<button class='onl-btn onl-water' id='onl-join'>" + iconSvg("water", 22, "#fff") +
-            "<span>" + t("btnJoin") + "<small>" + t("btnJoinSub") + "</small></span></button>" +
+          "<button class='onl-btn' id='onl-host'>" + t("btnStart") + "<small>" + t("btnStartSub") + "</small></button>" +
+          "<button class='onl-btn' id='onl-join'>" + t("btnJoin") + "<small>" + t("btnJoinSub") + "</small></button>" +
         "</div>" +
+        "<span class='onl-rd' id='onl-hostip' style='margin-top:6px'></span>" +
 
         "<div class='onl-sec'>" + t("secSet") + "</div>" +
-        "<label class='onl-row'><div class='onl-rtxt'><div class='onl-rt'>" + t("setAlt") + "</div>" +
-          "<div class='onl-rd'>" + t("setAltDesc") + "</div></div>" +
-          "<span class='onl-sw'><input type='checkbox' id='onl-alt'><i></i></span></label>" +
-        "<label class='onl-row'><div class='onl-rtxt'><div class='onl-rt'>" + t("setComp") + "</div>" +
-          "<div class='onl-rd'>" + t("setCompDesc") + "</div></div>" +
-          "<span class='onl-sw'><input type='checkbox' id='onl-comp'><i></i></span></label>" +
-        "<label class='onl-row'><div class='onl-rtxt'><div class='onl-rt'>" + t("setAuto") + "</div>" +
-          "<div class='onl-rd'>" + t("setAutoDesc") + "</div></div>" +
-          "<span class='onl-sw'><input type='checkbox' id='onl-auto'><i></i></span></label>" +
-        "<div class='onl-sliderbox'><div class='onl-slhead'><div><div class='onl-rt'>" + t("setCap") + "</div>" +
-          "<div class='onl-rd'>" + t("setCapDesc") + "</div></div><div class='onl-val' id='onl-capv'></div></div>" +
+        "<label class='onl-row'><input type='checkbox' id='onl-alt'><span><span class='onl-rt'>" + t("setAlt") + "</span>" +
+          "<span class='onl-rd'>" + t("setAltDesc") + "</span></span></label>" +
+        "<label class='onl-row'><input type='checkbox' id='onl-comp'><span><span class='onl-rt'>" + t("setComp") + "</span>" +
+          "<span class='onl-rd'>" + t("setCompDesc") + "</span></span></label>" +
+        "<label class='onl-row'><input type='checkbox' id='onl-auto'><span><span class='onl-rt'>" + t("setAuto") + "</span>" +
+          "<span class='onl-rd'>" + t("setAutoDesc") + "</span></span></label>" +
+        "<div class='onl-block'><div class='onl-slhead'><span class='onl-rt'>" + t("setCap") + "</span>" +
+          "<span class='onl-val' id='onl-capv'></span></div>" +
+          "<span class='onl-rd'>" + t("setCapDesc") + "</span>" +
           "<input type='range' id='onl-cap' class='onl-range' min='20' max='320' step='10'></div>" +
 
-        // ---- Dil seçici ----
-        "<div class='onl-row' style='cursor:default;'><div class='onl-rtxt'><div class='onl-rt'>" + t("setLang") + "</div>" +
-          "<div class='onl-rd'>" + t("setLangDesc") + "</div></div>" +
-          "<select id='onl-lang' class='onl-in onl-select' style='width:120px;height:36px;flex:none;padding:0 26px 0 10px;cursor:pointer;'>" +
+        "<div class='onl-langrow'><span>" + t("setLang") + "</span>" +
+          "<select id='onl-lang' class='onl-in onl-select'>" +
             "<option value='tr'>Türkçe</option>" +
             "<option value='en'>English</option>" +
           "</select></div>" +
 
-        "<button class='onl-btn onl-ghost' id='onl-off'>" + t("btnDisconnect") + "</button>" +
+        "<button class='onl-btn onl-off' id='onl-off'>" + t("btnDisconnect") + "</button>" +
         "<div class='onl-foot'>" + t("footText") + "</div>" +
       "</div>";
 
@@ -2575,6 +2961,18 @@
 
     var addr = panelEl.querySelector("#onl-addr");
     addr.value = loadSaved("addr", DEFAULT_SERVER);
+
+    // Başlat'a basarsan arkadaşının bağlanacağı adres (bu bilgisayarın yerel IP'si + port)
+    function showHostIp() {
+      var p = parseInt(String(addr.value).split(":")[1] || "7777", 10);
+      if (isNaN(p) || p < 1 || p > 65535) p = 7777;
+      var ips = lanAddresses();
+      panelEl.querySelector("#onl-hostip").textContent = ips.length
+        ? t("hostHint", ips.slice(0, 3).map(function (a) { return a + ":" + p; }).join(" / "))
+        : t("hostHintNone");
+    }
+    showHostIp();
+    addr.addEventListener("input", showHostIp);
 
     var altBox = panelEl.querySelector("#onl-alt");
     altBox.checked = altKeysOn;
