@@ -1,4 +1,18 @@
-/* Ateş ve Su - Online Mod (prototip v0.9.6 - DONMA DÜZELTMESİ, TR/EN dil desteği)
+/* Ateş ve Su - Online Mod (prototip v0.9.7 - OYUN OLAYLARI SENKRONU, v0.9.6 donma düzeltmesi, TR/EN)
+ *
+ * v0.9.7: PLATFORM / DÜĞME / ŞALTER / ELMAS / ÇIKIŞ KAPISI SENKRONU (oyunun kendi kodu okunarak yazıldı).
+ *   Oyunda platformlar, kapılar vb. "durum" (state) ile çalışır; durumu düğme/şalter belirler (MechManager.deviceChanged).
+ *   Düğme ve şalterin durumu her bilgisayarda kendi fiziğinden hesaplanıyordu, bu yüzden iki tarafta ayrışıyor ve platform
+ *   motorları farklı yöne itiyordu. Artık HOST tek otorite:
+ *   (1) Host, level.objects içindeki her aygıtın state değerini değişince guest'e yollar (ev:"dv"); guest aynı değeri
+ *       kendi aygıtına yazıp aynı motor/ışık/ses güncellemesini yapar. Guest'te aygıtların kendi signal.dispatch'i susturulur
+ *       ve şalter/düğme/kaydırıcı checkState'i devre dışı bırakılır (karar sadece host'tan gelir).
+ *   (2) Elmaslar: host toplanma olayını (hangi elmas, kim aldı) yollar (ev:"dia"); guest kendi temasını yok sayar ve olayı
+ *       oyunun kendi grabbed() fonksiyonuyla uygular (sayaç, ses, gizlenme aynen).
+ *   (3) Çıkış kapıları: host isOpen durumunu yollar (ev:"dr"); guest'te isOpen yerel temasla değişmez.
+ *   (4) Platform gövdeleri guest'te her snapshot'ta host konumuna tam oturtulur (yumuşatma yok).
+ *   (5) Guest bağlanınca / F8 ile / yeniden katılınca host tüm durumu tek seferde yeniden yollar.
+ *   Bu sürüm gerçek oyunla denenmedi; sahte oyun nesneleriyle mantık testi yapıldı. Sorun olursa F7 → log.
  *
  * v0.9.6: GUEST'TE "ÇOK RESTART SONRASI OYUN BAŞLAMADAN DONUYOR" HATASI.
  *   Phaser'ın kare döngüsü (requestAnimationFrame) kare içinde bir hata fırlarsa kendini bir daha planlamaz: oyun kalıcı
@@ -29,7 +43,7 @@
 (function () {
   "use strict";
 
-  var VERSION = "v0.9.6";
+  var VERSION = "v0.9.7";
   var DEFAULT_SERVER = "127.0.0.1:7777";
   var SNAP_MS = 33; // 30Hz
   var FAST_MS = 12;
@@ -297,6 +311,15 @@
   var wdHeals = 0;
   var lastBodyCount = -1;
   var altKeyCache = {};
+  var SYNC_EV_MS = 25;
+  var devLast = []; // host: aygıt başına son gönderilen state
+  var doorLast = [-2, -2];
+  var lastEvScan = 0;
+  var fullEv = false;
+  var evSent = 0;
+  var evApplied = 0;
+  var evLogs = 0;
+  var lastGuestHook = 0;
   var tmpVel = null;
   var lastKayma = 0;
   var lastStatusSig = "";
@@ -636,6 +659,7 @@
         lastSeq = -1;
         if (role === "host") {
           fullAll = true;
+          fullEv = true;
           if (lastGo) send({ t: "go", s: lastGo.s, w: lastGo.w, c: lastGo.c, p: lastGo.p });
         }
         break;
@@ -671,7 +695,10 @@
       case "hb":
         break;
       case "rs":
-        if (role === "host") fullAll = true;
+        if (role === "host") {
+          fullAll = true;
+          fullEv = true;
+        }
         break;
       case "snap":
         if (role === "guest") applySnapshot(m);
@@ -684,6 +711,7 @@
         break;
       case "ev":
         if (role === "host") onRemoteEvent(m);
+        else if (role === "guest") onHostEvent(m);
         break;
       case "chat":
         if (typeof m.msg === "string" && m.msg.length <= 200) {
@@ -1341,6 +1369,10 @@
     attWorld = world;
     attP1 = lv.pers1;
     attP2 = lv.pers2;
+    devLast = [];
+    doorLast = [-2, -2];
+    fullEv = true; // host: yeni bölümde tüm durumu bir kez yolla
+    if (role === "guest") guestHookAll(lv); // guest: yerel karar mekanizmalarını hemen sustur
     detailLogs = 0;
     lastDetail = 0;
     if (role === "guest") send({ t: "rs" });
@@ -1383,6 +1415,7 @@
       attached = false;
     }
     hookLevel(level);
+    if (role === "host") hostHookDiamonds(level); // eşleşmeden önce toplanan elmasların kim tarafından alındığını da kaydet
     var fading = !!(g.state && g.state.fading);
     var world = g.physics && g.physics.box2d && g.physics.box2d.world;
     // Aynı Level nesnesi/dünya yeniden kullanılsa bile yeni karakterler = yeni bölüm: yeniden bağlan
@@ -1637,7 +1670,7 @@
       } else {
         snap = forced || dist > 0.7;
       }
-      var f = isStatic || snap ? 1 : isMine ? (idle ? 0.45 : 0.25) : 0.5;
+      var f = isStatic || snap || b.__onlPlat ? 1 : isMine ? (idle ? 0.45 : 0.25) : 0.5;
 
       if (!snap && dist < 0.005 && da < 0.005 && da > -0.005) {
         if (isMine) ownLog = [px0, py0, e[1], e[2]];
@@ -1705,6 +1738,246 @@
         lastFixSay = now;
         say(t("mSyncFix", worst));
       }
+    }
+  }
+
+  /* ---------------- Oyun olayları senkronu (v0.9.7) ---------------- */
+  // Oyun mimarisi (init.js'ten): Level.objects = aygıtlar (Lever, Pusher, MovingPlatform ...), her aygıtın .state değeri
+  // vardır. Düğme/şalter/kaydırıcı (signal'i olanlar) state'i değişince MechManager.deviceChanged aynı gruptaki diğer
+  // aygıtlara state'i yayar ve _updateState() çağırır (platform motoru yön değiştirir). Level.diamonds = elmaslar
+  // (data.alive, grabbed()). Level.door1/door2 = çıkış kapıları (isOpen temasla değişir).
+
+  function charCode(lv, ch) {
+    if (!lv || !ch) return "";
+    if (ch === lv.pers1) return "1";
+    if (ch === lv.pers2) return "2";
+    var fi = lv.friends ? lv.friends.indexOf(ch) : -1;
+    return fi >= 0 ? "f" + fi : "";
+  }
+
+  function charFromCode(lv, code) {
+    if (code === "1") return lv.pers1;
+    if (code === "2") return lv.pers2;
+    if (code && code.charAt(0) === "f" && lv.friends) return lv.friends[+code.slice(1)] || null;
+    return null;
+  }
+
+  function evLog(msg) {
+    if (evLogs < 40) {
+      evLogs++;
+      log("EV " + msg);
+    }
+  }
+
+  /* ---- HOST ---- */
+
+  function hostHookDiamonds(lv) {
+    var ds = lv.diamonds;
+    if (!ds) return;
+    for (var i = 0; i < ds.length; i++) {
+      var d = ds[i];
+      if (!d || d.__onlHook || typeof d.grabbed !== "function") continue;
+      d.__onlHook = true;
+      (function (og) {
+        d.grabbed = function (ch) {
+          var was = !!(this.data && this.data.alive);
+          var r = og.apply(this, arguments);
+          if (was) {
+            this.__onlBy = charCode(lv, ch);
+            if (connected && peerHere) {
+              var idx = lv.diamonds.indexOf(this);
+              if (idx >= 0) {
+                send({ t: "ev", ev: "dia", i: idx, c: this.__onlBy });
+                evSent++;
+                evLog("elmas toplandı #" + idx + " by=" + this.__onlBy);
+              }
+            }
+          }
+          return r;
+        };
+      })(d.grabbed);
+    }
+  }
+
+  function hostSyncEvents() {
+    if (role !== "host" || !attached || !peerHere || !level) return;
+    var now = Date.now();
+    if (!fullEv && now - lastEvScan < SYNC_EV_MS) return;
+    var g = getGame();
+    if (!g || g.level !== level || (g.state && g.state.fading)) return;
+    lastEvScan = now;
+    var lv = level;
+    hostHookDiamonds(lv);
+    var full = fullEv;
+    fullEv = false;
+
+    var out = [];
+    var objs = lv.objects || [];
+    for (var i = 0; i < objs.length; i++) {
+      var d = objs[i];
+      var st = d && d.state;
+      if (typeof st !== "number" || st !== st) continue;
+      var last = devLast[i];
+      if (full || last === undefined || Math.abs(st - last) > 0.001) {
+        out.push([i, Math.round(st * 1000) / 1000]);
+        devLast[i] = st;
+      }
+    }
+    if (out.length) {
+      send({ t: "ev", ev: "dv", f: full ? 1 : 0, d: out });
+      evSent++;
+      if (!full) evLog("aygıt durumu " + JSON.stringify(out).slice(0, 120));
+    }
+
+    var o1 = lv.door1 ? (lv.door1.isOpen ? 1 : 0) : -1;
+    var o2 = lv.door2 ? (lv.door2.isOpen ? 1 : 0) : -1;
+    if (full || o1 !== doorLast[0] || o2 !== doorLast[1]) {
+      doorLast = [o1, o2];
+      send({ t: "ev", ev: "dr", o: [o1, o2] });
+      evSent++;
+      evLog("kapı " + o1 + "," + o2);
+    }
+
+    if (full && lv.diamonds && lv.diamonds.length) {
+      var codes = [];
+      for (var k = 0; k < lv.diamonds.length; k++) {
+        var dia = lv.diamonds[k];
+        // Toplayan bilinmiyorsa (kanca takılmadan alınmışsa) renkli elmasta rengine göre tahmin et
+        codes.push(dia && dia.data && dia.data.alive === false ? dia.__onlBy || (dia.data.char === "wg" ? "2" : "1") : "0");
+      }
+      send({ t: "ev", ev: "dias", a: codes });
+      evSent++;
+    }
+    if (full) evLog("TAM DURUM yollandı: aygıt=" + out.length + " elmas=" + (lv.diamonds ? lv.diamonds.length : 0));
+  }
+
+  /* ---- GUEST ---- */
+
+  function guestHookDiamonds(lv) {
+    var ds = lv.diamonds;
+    if (!ds) return;
+    for (var i = 0; i < ds.length; i++) {
+      var d = ds[i];
+      if (!d || d.__onlHook || typeof d.grabbed !== "function") continue;
+      d.__onlHook = true;
+      (function (og) {
+        // Yerel temas elması toplayamaz; sadece host olayı (__onlAllow) geçer
+        d.grabbed = function () {
+          if (!this.__onlAllow) return;
+          return og.apply(this, arguments);
+        };
+      })(d.grabbed);
+    }
+  }
+
+  function guestHookDoors(lv) {
+    [lv.door1, lv.door2].forEach(function (door) {
+      if (!door || door.__onlHook) return;
+      door.__onlHook = true;
+      var store = !!door.isOpen;
+      try {
+        // Yerel temas isOpen'ı değiştiremez; değeri sadece host'tan gelir
+        Object.defineProperty(door, "isOpen", {
+          configurable: true,
+          enumerable: true,
+          get: function () {
+            return store;
+          },
+          set: function () {},
+        });
+        door.__onlSetOpen = function (v) {
+          store = !!v;
+        };
+      } catch (e) {
+        log("kapı kancası HATA: " + e);
+      }
+    });
+  }
+
+  function guestHookDevices(lv) {
+    var objs = lv.objects || [];
+    for (var i = 0; i < objs.length; i++) {
+      var d = objs[i];
+      if (!d || d.__onlHook) continue;
+      d.__onlHook = true;
+      var type = d.options && d.options.type;
+      try {
+        // Düğme/şalter/kaydırıcı kararını sadece host verir: yerel signal ve yerel durum denetimi susturulur
+        if (d.signal && typeof d.signal.dispatch === "function") d.signal.dispatch = function () {};
+        if (type === "lever" || type === "pusher" || type === "slider") d.checkState = function () {};
+        // Platform gövdeleri her snapshot'ta host konumuna tam oturtulur
+        if (type === "platform" && d.body && d.body.data) d.body.data.__onlPlat = true;
+      } catch (e) {
+        log("aygıt kancası HATA #" + i + ": " + e);
+      }
+    }
+  }
+
+  function guestHookAll(lv) {
+    if (!lv) return;
+    try {
+      guestHookDevices(lv);
+      guestHookDiamonds(lv);
+      guestHookDoors(lv);
+    } catch (e) {
+      log("guestHookAll HATA: " + (e && e.stack ? e.stack : e));
+    }
+  }
+
+  function applyDevState(lv, i, st, quiet) {
+    var d = lv.objects && lv.objects[i];
+    if (!d || typeof d.state !== "number") return;
+    if (Math.abs(d.state - st) <= 0.001) return;
+    d.state = st;
+    var type = d.options && d.options.type;
+    if (type === "lever" && d.joint && typeof d.joint.SetMotorSpeed === "function") {
+      var onis = d.options.properties && d.options.properties.onis;
+      d.joint.SetMotorSpeed(st ? -4 * onis : 4 * onis); // Lever.checkState'in yaptığı motor yönü değişimi
+    }
+    if (typeof d._updateState === "function") d._updateState(); // ışık + platform motoru (MechManager.deviceChanged'in yaptığı)
+    if (!quiet && (type === "lever" || type === "pusher")) {
+      try {
+        var snd = lv.sounds && lv.sounds[type];
+        if (snd && snd.play) snd.play();
+      } catch (e) {}
+    }
+    evApplied++;
+  }
+
+  function applyDiamond(lv, i, code) {
+    var d = lv.diamonds && lv.diamonds[i];
+    if (!d || !d.data || !d.data.alive) return;
+    var ch = charFromCode(lv, code) || lv.pers1;
+    d.__onlAllow = true;
+    try {
+      d.grabbed(ch);
+    } finally {
+      d.__onlAllow = false;
+    }
+    evApplied++;
+  }
+
+  function onHostEvent(m) {
+    if (!attached || !level) return;
+    var g = getGame();
+    if (!g || g.level !== level || (g.state && g.state.fading)) return;
+    var lv = level;
+    guestHookAll(lv);
+    try {
+      if (m.ev === "dv" && Array.isArray(m.d)) {
+        for (var i = 0; i < m.d.length; i++) applyDevState(lv, m.d[i][0], m.d[i][1], !!m.f);
+        if (!m.f) evLog("aygıt durumu alındı " + JSON.stringify(m.d).slice(0, 120));
+      } else if (m.ev === "dia") {
+        applyDiamond(lv, m.i, String(m.c || ""));
+        evLog("elmas alındı #" + m.i);
+      } else if (m.ev === "dias" && Array.isArray(m.a)) {
+        for (var k = 0; k < m.a.length; k++) if (m.a[k] !== "0") applyDiamond(lv, k, String(m.a[k]));
+      } else if (m.ev === "dr" && Array.isArray(m.o)) {
+        if (lv.door1 && lv.door1.__onlSetOpen && m.o[0] >= 0) lv.door1.__onlSetOpen(m.o[0]);
+        if (lv.door2 && lv.door2.__onlSetOpen && m.o[1] >= 0) lv.door2.__onlSetOpen(m.o[1]);
+      }
+    } catch (e) {
+      log("onHostEvent HATA (" + m.ev + "): " + (e && e.stack ? e.stack : e));
     }
   }
 
@@ -2387,6 +2660,11 @@
   function fastTick() {
     if (!attached || !level) return;
     var now = Date.now();
+    if (role === "host") hostSyncEvents();
+    else if (role === "guest" && now - lastGuestHook > 500) {
+      lastGuestHook = now;
+      guestHookAll(level); // yeniden oluşturulan elmas vb. için
+    }
     if (role === "host") {
       applyRemoteInputOnHost();
       var c = level.pers1 && level.pers1.cursors;
