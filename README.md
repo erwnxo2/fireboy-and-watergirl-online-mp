@@ -1,12 +1,56 @@
-**Hello! To play *Fireboy and Watergirl*—the game of our childhood—remotely with my friend, I had Claude code an online multiplayer mod for the Steam version. It even includes a chat system. I hope you like it!**
+Fireboy and Watergirl Online Mod
 
-**Note: The mod has been tested on *The Forest Temple*.**
+An online two-player mod for the Steam version of Fireboy and Watergirl. One player hosts a lobby, the other joins from the lobby list, and you play the same level over the internet.
 
-**Installation**
+This is an unofficial fan mod. It contains no game files, so you need your own copy of the game.
 
-* **Mod Installation: Go to the game directory, navigate to the `resources` folder, then into the `app` folder. Drag and drop the `main.js` file there and choose to replace the file in the destination. Next, go to the `www` folder, drag and drop the `online.js` and `index.html` files there, replacing the destination files if necessary.**
-- ~~**Server Installation: Create a new folder anywhere you like and place the server files (`server.js` and `start-server.bat`) inside it.**~~  The server has been embedded into online.js and configured to run automatically.
+Features
+Online lobbies through a relay server. No port forwarding or IP sharing needed.
+Lobby list with name, version, player count and ping. Lobbies can have a password.
+LAN lobbies are found automatically, or connect by IP.
+Direct player-to-player connection (WebRTC) when possible, with automatic fallback to the server.
+Level changes, deaths, restarts, buttons, levers, platforms, doors and diamonds stay in sync.
+Chat, nicknames, host kick/ban, Turkish and English UI.
+How it works
 
-**How It Works**
+The host runs the physics. The guest sends its key presses and receives world snapshots about 30 times per second. The guest's own input is delayed by about half the round-trip time so it matches what the host simulates, so lower ping means less delay. If the two states drift apart, the guest asks the host for a full resync.
 
-**~~You will need to connect to the same network with your friend using applications like Hamachi or Radmin VPN. Once connected to the same network, one of you should run the server. Open the in-game mod menu and have one person create a lobby. The player joining should type the IP address from your network application into the IP field and join the lobby. Finally, one of you selects a level and enjoys the fun!~~** **Now you can play online with no programs!** **Sounds like AI slop, but it isn't.**
+Players connect directly when they can. If that fails or drops, everything goes through the server.
+
+Installation
+Download main.js, index.html and online.js from the latest release.
+Close the game and open its folder: in Steam, right-click the game, then Manage, then Browse local files.
+Open the resources folder, then the app folder. Copy main.js there and replace the existing file.
+Open the www folder inside app. Copy online.js and index.html there and replace the existing files.
+Start the game. The mod's version shows in the status line at the bottom of the screen and at the top of the mod menu (Tab or F9).
+
+This replaces two of the game's own files. Keep a copy of the originals if you want to go back, or use Steam's "Verify integrity of game files" to restore them.
+
+Both players must use the same version. A lobby refuses players on a different version. To update, repeat the steps with the new files.
+
+Playing
+
+Host: press Tab or F9, set the lobby type to Online, name the lobby (add a password if you like) and press Start. You play Fireboy.
+
+Guest: open the mod menu, open the lobby window, pick the lobby and press Join. You play Watergirl.
+
+Key	Action
+Tab / F9	Mod menu
+Enter	Chat
+F7	Mark the log file (use when reporting a bug)
+Your IP address
+
+With a direct connection the other player can see your IP address, and you can see theirs. To avoid that, turn off "Direct connection (P2P)" in the mod menu. The game then uses the server only, with higher ping.
+
+"P2P" next to the ping means the direct connection is active. If it's missing you are on the server, which also works. Direct connections can fail on some networks, mobile data in particular.
+
+Known issues
+A short red warning can appear after restarting a level. It goes away on its own.
+Two players only.
+Bug reports
+
+Press F7 when the problem happens, then open an issue with what you did, the mod version, and the fbwg-online-log.txt file.
+
+License
+
+MIT. See LICENSE.
