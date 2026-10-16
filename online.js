@@ -1,10 +1,24 @@
-/* Ateş ve Su - Online Mod (prototip v0.9.11 - ONLINE SUNUCU (internet lobileri), v0.9.10 lobi tarayıcı TCP yoklaması, v0.9.9 LAN LOBİ TARAYICI, v0.9.8 senkron kontrolü, v0.9.7 oyun olayları senkronu, v0.9.6 donma düzeltmesi, TR/EN)
+/* Ateş ve Su - Online Mod (prototip v0.9.13 - v0.9.12 ping, v0.9.11 ONLINE SUNUCU (internet lobileri), v0.9.10 lobi tarayıcı TCP yoklaması, v0.9.9 LAN LOBİ TARAYICI, v0.9.8 senkron kontrolü, v0.9.7 oyun olayları senkronu, v0.9.6 donma düzeltmesi, TR/EN)
+ *
+ * v0.9.13: DOĞRUDAN BAĞLANTI (WebRTC / P2P). Online lobide oyun verisi (input, snapshot, ping ve oyun olayları) artık mümkünse
+ *   sunucudan dolaşmadan iki oyuncu arasında doğrudan gider; sunucu sadece eşleştirme (sig mesajları) yapar. İki Türkiye'li
+ *   oyuncu arasında ping ~105 ms'den ~20-40 ms'ye iner. Kurulamazsa (sıkı NAT/güvenlik duvarı) ya da koparsa her şey kendiliğinden
+ *   eski sunucu aktarımına döner; TCP bağlantısı hep açık kalır (heartbeat, lobi, sig). Kanallar: "f" güvenilmez+sırasız (in, snap,
+ *   ping, pong), "r" güvenilir+sıralı (ev, go, over, rs, chat). Girdi mesajlarına sıra numarası (q) eklendi, 50 ms'de bir tekrarlanır.
+ *   Menü → "Doğrudan bağlantı (P2P)" ile kapatılabilir (P2P'de arkadaşın IP adresini görebilir). Durum çubuğunda ping yanında "P2P" yazar.
+ *   Sunucu (fbwg-server.js) "sig" mesajını aktarmalı; eski sunucuda P2P kurulmaz ama oyun eskisi gibi çalışır. İki taraf da yeni dosyayı kullanmalı.
+ *
+ * v0.9.12: Host'ta da ping göstergesi (iki yönlü ping/pong). Sohbet ekranın ortasına taşındı; karşı taraf yazarken
+ *   "<ad> yazıyor..." çıkar. Takma ad (varsayılan "Player") sohbette ve lobi listesinde görünür. Lobi tarayıcı kendi
+ *   penceresinde (🔍 Lobiler); şifre, Katıl'a basınca sorulur. Host misafiri atabilir/banlayabilir (Tab menüsü → Oyuncu).
+ *   Sol altta ⚙ Menü düğmesi. İki tuş takımı ve gecikme telafisi her zaman açık; upload sınırı sabit (menüde gizli).
+ *   Karşıdan mesaj gelince kısa bildirim sesi (menüden kapatılabilir). İki taraf da bu dosyayı kullanmalı (sürüm kontrolü).
  *
  * v0.9.11: ONLINE SUNUCU. Oyun artık internetten de oynanabilir: merkezi sunucuya (fbwg-server.js, ayrı dosya, VPS'te çalışır)
  *   bağlanılır. Host "Başlat" deyince (Lobi türü: Online) sunucuda bir oda açılır; menüdeki lobi listesi yerel ağ lobilerinin yanında
  *   sunucudaki odaları da gösterir (🌐). Oda isteğe bağlı şifreli olabilir (🔒). Oyun verisi sunucu üzerinden aktarılır: host'ta port
  *   açmaya / IP öğrenmeye gerek yok. Yerel ağ modu (UDP + TCP tarama, elle IP) aynen çalışmaya devam eder.
- *   Sunucu adresi: menü → Ayarlar → "Online sunucu adresi" ya da aşağıdaki ONLINE_SERVER_DEFAULT satırı.
+ *   Sunucu adresi: aşağıdaki ONLINE_SERVER_DEFAULT satırında sabit (menüde değiştirilemez).
  *   Protokol eklemeleri: host {name, pw}, join {room, pw}, ok {room}, list/lobbies, err {fatal} (düzeltilemez hatada otomatik
  *   yeniden bağlanma yapılmaz: yanlış şifre, dolu/kapanmış lobi, sürüm uyuşmazlığı). Bağlantı kurma zaman aşımı 10 sn.
  *   İki taraf da yeni dosyayı kullanmalı (sürüm kontrolü).
@@ -79,10 +93,10 @@
 (function () {
   "use strict";
 
-  var VERSION = "v0.9.11";
+  var VERSION = "v0.9.13";
   var DEFAULT_SERVER = "127.0.0.1:7777";
   // Merkezi sunucunun adresi (IP:port). Boş bırakırsan menüden (Ayarlar → Online sunucu adresi) girersin.
-  var ONLINE_SERVER_DEFAULT = "";
+  var ONLINE_SERVER_DEFAULT = "193.122.3.155"; // sabit online sunucu (port verilmezse 7780); menüden değiştirilemez
   var SNAP_MS = 33; // 30Hz
   var FAST_MS = 12;
   var BODY_STATIC = 0;
@@ -130,6 +144,12 @@
       setCompDesc: "Su oyuncusu için, zıplama senkronunu düzeltir",
       setAuto: "Otomatik yeniden bağlan",
       setAutoDesc: "Bağlantı kopunca kendiliğinden tekrar dener",
+      setSnd: "Bildirim sesleri",
+      setSndDesc: "Sohbet mesajı gelince ve oyuncu girip çıkınca kısa bir ses çalar",
+      setP2p: "Doğrudan bağlantı (P2P)",
+      setP2pDesc: "Online lobide veri sunucudan dolaşmadan arkadaşına gider, ping düşer. Arkadaşın IP adresini görebilir",
+      mP2pOn: "doğrudan bağlantı kuruldu (P2P)",
+      mP2pOff: "doğrudan bağlantı koptu, sunucu üzerinden devam ediliyor",
       setCap: "Upload sınırı",
       setCapDesc: "Discord/internet kasıyorsa düşür",
       capUnlimited: "Sınırsız",
@@ -186,14 +206,28 @@
       mNoFile: "dosya oluşturulamadı",
       chatPlaceholder: "Mesaj yaz...",
       chatFireName: "Ateş",
+      chatTyping: "{0} yazıyor...",
       chatWaterName: "Su",
       secLobby: "Lobiler",
       lobbyEmpty: "Açık lobi bulunamadı. Biri Başlat'a basınca burada görünür.",
+      lobbyBusy: "Zaten bir lobiye bağlısın. Yeni lobiye girmek için önce Tab menüsünden bağlantıyı kes.",
+      lobbyPwAsk: "Bu lobi şifreli. Katılmak için şifreyi yaz.",
+      btnCancel: "İptal",
+      menuBtn: "Menü",
+      secPlayer: "Oyuncu",
+      btnKick: "At",
+      btnBan: "Banla",
+      btnUnban: "Kaldır",
+      lblBanned: "Banlı oyuncular",
+      mKicked: "Host seni lobiden attı.",
+      mBanned: "Host seni lobiden banladı.",
+      mBannedTry: "Banlı oyuncu girmeye çalıştı: {0}",
+      mBanNoId: "Bu oyuncuda eski mod sürümü var, banlanamadı; sadece atıldı.",
       lobbyJoin: "Katıl",
       lobbyFull: "Dolu",
       lobbyVer: "Sürüm uyuşmuyor",
       lobbyScanErr: "UDP taraması başlatılamadı: {0} (TCP taraması çalışıyor)",
-      lblLobbyName: "Lobi adı (listede görünür)",
+      lblLobbyName: "Takma ad (lobi listesinde ve sohbette görünür)",
       btnLobbies: "🌐 Lobiler",
       btnOnline: "🌐 Online",
       lobbyDiag: "Tarama · UDP: {0} · TCP: {1}",
@@ -202,7 +236,7 @@
       lblMode: "Lobi türü (Başlat için)",
       modeOnline: "Online (internet, sunucu üzerinden)",
       modeLan: "Yerel ağ",
-      lblPw: "Lobi şifresi (isteğe bağlı; açarken ve katılırken)",
+      lblPw: "Lobi şifresi (isteğe bağlı; lobiyi açarken)",
       setSrv: "Online sunucu adresi",
       setSrvDesc: "Merkezi sunucunun IP:port'u (örn. 203.0.113.5:7780)",
       srvDiag: "Online sunucu: {0}",
@@ -245,6 +279,12 @@
       setCompDesc: "Fixes jump sync for the Water player",
       setAuto: "Auto-reconnect",
       setAutoDesc: "Tries to reconnect automatically when disconnected",
+      setSnd: "Notification sounds",
+      setSndDesc: "Plays a short sound when a chat message arrives or a player joins/leaves",
+      setP2p: "Direct connection (P2P)",
+      setP2pDesc: "In online lobbies data goes straight to your friend instead of via the server, lowering ping. Your friend can see your IP address",
+      mP2pOn: "direct connection established (P2P)",
+      mP2pOff: "direct connection lost, continuing via the server",
       setCap: "Upload cap",
       setCapDesc: "Lower it if Discord/internet is lagging",
       capUnlimited: "Unlimited",
@@ -301,14 +341,28 @@
       mNoFile: "could not create file",
       chatPlaceholder: "Type a message...",
       chatFireName: "Fire",
+      chatTyping: "{0} is typing...",
       chatWaterName: "Water",
       secLobby: "Lobbies",
       lobbyEmpty: "No open lobbies found. They show up here when someone presses Start.",
+      lobbyBusy: "You are already in a lobby. Disconnect from the Tab menu first to join another one.",
+      lobbyPwAsk: "This lobby has a password. Type it to join.",
+      btnCancel: "Cancel",
+      menuBtn: "Menu",
+      secPlayer: "Player",
+      btnKick: "Kick",
+      btnBan: "Ban",
+      btnUnban: "Remove",
+      lblBanned: "Banned players",
+      mKicked: "The host kicked you from the lobby.",
+      mBanned: "The host banned you from the lobby.",
+      mBannedTry: "Banned player tried to join: {0}",
+      mBanNoId: "This player has an old mod version and could not be banned; only kicked.",
       lobbyJoin: "Join",
       lobbyFull: "Full",
       lobbyVer: "Version mismatch",
       lobbyScanErr: "Could not start UDP scan: {0} (TCP scan still running)",
-      lblLobbyName: "Lobby name (shown in the list)",
+      lblLobbyName: "Nickname (shown in the lobby list and chat)",
       btnLobbies: "🌐 Lobbies",
       btnOnline: "🌐 Online",
       lobbyDiag: "Scan · UDP: {0} · TCP: {1}",
@@ -317,7 +371,7 @@
       lblMode: "Lobby type (for Start)",
       modeOnline: "Online (internet, via server)",
       modeLan: "Local network",
-      lblPw: "Lobby password (optional; when hosting and joining)",
+      lblPw: "Lobby password (optional; when hosting)",
       setSrv: "Online server address",
       setSrvDesc: "IP:port of the central server (e.g. 203.0.113.5:7780)",
       srvDiag: "Online server: {0}",
@@ -376,7 +430,7 @@
   var HOLD_MS = 70;
   var hostPulse = { l: 0, r: 0, u: 0 };
   var rtt = 0;
-  var peerRtt = 0;
+  var peerRtt = 0; // host tarafında gösterilen ping (telafi hesabına girmez)
   var compOn = true;
   var delayMs = 0;
   var rawLocal = null;
@@ -449,6 +503,30 @@
   var txRate = 0;
 
   var autoReconnect = false;
+
+  // Doğrudan bağlantı (WebRTC, v0.9.13)
+  var P2P_ICE = [
+    { urls: "stun:stun.l.google.com:19302" },
+    { urls: "stun:stun1.l.google.com:19302" },
+    { urls: "stun:stun.cloudflare.com:3478" }
+  ];
+  var P2P_FAST = { in: 1, snap: 1, ping: 1, pong: 1 }; // güvenilmez+sırasız kanal
+  var P2P_REL = { ev: 1, go: 1, over: 1, rs: 1, chat: 1 }; // güvenilir+sıralı kanal
+  var p2pOn = loadSaved("p2p", "1") !== "0";
+  var p2pPc = null;
+  var p2pFastCh = null;
+  var p2pRelCh = null;
+  var p2pReady = false;
+  var p2pId = 0;
+  var p2pTimer = null;
+  var p2pRetryTimer = null;
+  var p2pRetries = 0;
+  var p2pPending = [];
+  var p2pRemoteSet = false;
+  var p2pLastRecv = 0;
+  var strayMusic = []; // bölüme geçerken menüde çalan döngülü sesler (menü müziği)
+  var lastInQ = -1; // host: en son işlenen misafir girdi sıra numarası
+  var inSeq = 0; // misafir: giden girdi sıra numarası
   var reconnectAddr = "";
   var reconnectRole = "";
   var reconnectExtra = null; // online bağlantı bilgisi {online, name|room, pw}
@@ -473,6 +551,7 @@
 
   var statusEl = null;
   var panelEl = null;
+  var lobPanelEl = null; // ayrı lobi tarayıcı penceresi (🔍 Lobiler düğmesi)
 
   function renderStatus() {
     if (!statusEl) return;
@@ -539,8 +618,12 @@
       }
       var atCap = now - capped < 1500;
       pingColor = atCap ? "#ff4" : "#4f4";
-      pingText = t("txLabel", Math.round(txRate / 1024)) + (atCap ? t("txAtCap") : "");
+      pingText =
+        (peerRtt ? t("pingLabel", Math.round(peerRtt)) + " | " : "") +
+        t("txLabel", Math.round(txRate / 1024)) +
+        (atCap ? t("txAtCap") : "");
     }
+    if (pingText && p2pReady) pingText += " · P2P";
     extraPre = role === "guest" && attached ? t("drift", myOffset.toFixed(2)) : "";
     extraPost = warn;
     statusAlert = alert;
@@ -644,6 +727,20 @@
   /* ---------------- Ağ ---------------- */
 
   function send(obj) {
+    var ty = obj && obj.t;
+    if (p2pReady && (P2P_FAST[ty] || P2P_REL[ty])) {
+      var pch = P2P_FAST[ty] ? p2pFastCh : p2pRelCh;
+      if (pch && pch.readyState === "open") {
+        try {
+          var ps = JSON.stringify(obj);
+          pch.send(ps);
+          txBytes += ps.length;
+          return ps.length;
+        } catch (e) {
+          // kanal gönderemedi (örn. çok büyük mesaj): sunucu yoluna düş
+        }
+      }
+    }
     if (sock && !sock.destroyed) {
       var line = JSON.stringify(obj) + "\n";
       sock.write(line);
@@ -982,15 +1079,9 @@
       .slice(0, 24);
   }
 
+  // Takma ad (lobi adı alanı): ilk girişte varsayılan "Player"
   function defaultLobbyName() {
-    try {
-      var os = window.nodeRequire("os");
-      var n = "";
-      try { n = cleanLobbyName(os.userInfo().username); } catch (e) {}
-      if (!n) n = cleanLobbyName(os.hostname());
-      if (n) return n;
-    } catch (e) {}
-    return t("chatFireName");
+    return "Player";
   }
 
   function currentLobbyName() {
@@ -1353,8 +1444,7 @@
   var srvDiagEl = null;
 
   function currentSrvAddr() {
-    var el = panelEl && panelEl.querySelector("#onl-srv");
-    return String(el ? el.value : loadSaved("srv", ONLINE_SERVER_DEFAULT)).trim();
+    return ONLINE_SERVER_DEFAULT;
   }
 
   function srvParsed() {
@@ -1523,20 +1613,53 @@
     if (srvDiagEl.textContent !== txt) srvDiagEl.textContent = txt;
   }
 
+  function joinOnline(l, pw) {
+    var sa = currentSrvAddr();
+    if (!sa) return;
+    connect(sa, "join", { online: true, room: l.room, pw: pw });
+    hidePanels();
+    if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
+  }
+
+  var pendingLobby = null;
+
+  function hideLobPw() {
+    pendingLobby = null;
+    var box = lobPanelEl && lobPanelEl.querySelector("#onl-pwbox");
+    var inp = lobPanelEl && lobPanelEl.querySelector("#onl-lpw");
+    if (inp) inp.value = "";
+    if (box) box.style.display = "none";
+  }
+
+  function askLobbyPw(l) {
+    var box = lobPanelEl && lobPanelEl.querySelector("#onl-pwbox");
+    var inp = lobPanelEl && lobPanelEl.querySelector("#onl-lpw");
+    var nm = lobPanelEl && lobPanelEl.querySelector("#onl-pwname");
+    if (!box || !inp) return;
+    pendingLobby = l;
+    if (nm) nm.textContent = "🔒 " + (l.name || l.room || "");
+    inp.value = "";
+    box.style.display = "block";
+    inp.focus();
+  }
+
+  function confirmLobbyPw() {
+    var inp = lobPanelEl && lobPanelEl.querySelector("#onl-lpw");
+    var l = pendingLobby;
+    if (!inp || !l) return;
+    if (!inp.value) { inp.focus(); return; }
+    var pw = inp.value;
+    hideLobPw();
+    joinOnline(l, pw);
+  }
+
   function joinLobby(l) {
     if (l.srv) {
-      var pwEl = panelEl && panelEl.querySelector("#onl-pw");
-      var pw = pwEl ? pwEl.value : "";
-      if (l.locked && !pw) {
-        say(t("lobbyNeedPw"));
-        if (pwEl) pwEl.focus();
+      if (l.locked) {
+        askLobbyPw(l); // şifreyi Katıl'a bastıktan sonra sor
         return;
       }
-      var sa = currentSrvAddr();
-      if (!sa) return;
-      connect(sa, "join", { online: true, room: l.room, pw: pw });
-      if (panelEl) panelEl.style.display = "none";
-      if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
+      joinOnline(l, "");
       return;
     }
     var addr = l.ip + ":" + l.port;
@@ -1544,8 +1667,21 @@
     var el = panelEl && panelEl.querySelector("#onl-addr");
     if (el) el.value = addr;
     connect(addr, "join");
-    if (panelEl) panelEl.style.display = "none";
+    hidePanels();
     if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
+  }
+
+  // Online odaların hepsi aynı sunucuda: gösterilen değer senin sunucuya olan pingin
+  function updateLobbyPings() {
+    if (!lobbyListEl) return;
+    var ping = onlGotList && onlSock && onlRtt ? " · " + Math.round(onlRtt) + " ms" : "";
+    var subs = lobbyListEl.querySelectorAll("[data-srv]");
+    for (var i = 0; i < subs.length; i++) {
+      var el = subs[i];
+      if (el.__base === undefined) el.__base = el.textContent;
+      var txt = el.__base + ping;
+      if (el.textContent !== txt) el.textContent = txt;
+    }
   }
 
   function buildLobbyRow(l) {
@@ -1562,6 +1698,7 @@
     sub.className = "onl-lb-s";
     var where = l.srv ? t("lobbyOnline") + (l.locked ? " · " + t("lobbyLocked") : "") : l.ip + ":" + l.port;
     sub.textContent = where + " · " + l.ver + (bad ? " · " + bad : "");
+    if (l.srv) sub.setAttribute("data-srv", "1"); // ping metni lobbyTick'te yerinde güncellenir
     info.appendChild(nm);
     info.appendChild(sub);
 
@@ -1616,10 +1753,12 @@
 
   // 500 ms'de bir: menü açık ve bağlı değilsek yerel ağı + sunucuyu dinle, listeyi yenile; değilsek hepsini bırak
   function lobbyTick() {
-    if (!panelEl) return;
+    updatePlayerSec();
+    updateLobbyPings();
+    if (!lobPanelEl) return;
     var busy = connected || !!sock;
-    var visible = panelEl.style.display !== "none";
-    if (lobbySecEl) lobbySecEl.style.display = busy ? "none" : "";
+    if (busy && lobPanelEl.style.display !== "none") lobPanelEl.style.display = "none"; // bağlanınca pencere kapanır
+    var visible = lobPanelEl.style.display !== "none";
     if (visible && !busy) {
       startLobbyScan();
       tcpScanTick();
@@ -1642,6 +1781,10 @@
   }
 
   function disconnect(reason, manual) {
+    peerRtt = 0;
+    p2pCloseConn();
+    p2pRetries = 0;
+    lastInQ = -1;
     connectAttemptId++; // bekleyen (sunucu açılmasını bekleyen) bağlantı denemesi iptal
     stopAdvertise();
     if (!embKeep) stopEmbedded();
@@ -1807,6 +1950,10 @@
         break;
       case "peer":
         peerHere = true;
+        lastInQ = -1;
+        p2pRetries = 0;
+        if (role === "host") playJoinSound();
+        sendNick();
         say(t("mBothReady", role === "host" ? t("chatFireName") : t("chatWaterName")));
         lastSeq = -1;
         if (role === "host") {
@@ -1814,9 +1961,15 @@
           fullEv = true;
           if (lastGo) send({ t: "go", s: lastGo.s, w: lastGo.w, c: lastGo.c, p: lastGo.p });
         }
+        p2pStart();
         break;
       case "gone":
         peerHere = false;
+        lastInQ = -1;
+        p2pCloseConn();
+        playLeaveSound();
+        peerNick = "";
+        peerId = "";
         releaseRemote();
         if (role === "guest") {
           applyGo({ s: "menu", w: 1, c: 0 });
@@ -1832,15 +1985,20 @@
       case "in":
         if (role === "host") onRemoteInput(m);
         break;
+      case "sig":
+        p2pSignal(m);
+        break;
       case "ping":
-        if (role === "host") send({ t: "pong", ts: m.ts });
+        send({ t: "pong", ts: m.ts });
         break;
       case "pong":
-        if (role === "guest") {
-          var rr = Date.now() - m.ts;
-          if (rr >= 0 && rr < 2000) {
+        var rr = Date.now() - m.ts;
+        if (rr >= 0 && rr < 2000) {
+          if (role === "guest") {
             rtt = rtt ? rtt * 0.8 + rr * 0.2 : rr;
             delayMs = compOn ? Math.min(80, rtt / 2 + 6) : 0;
+          } else {
+            peerRtt = peerRtt ? peerRtt * 0.8 + rr * 0.2 : rr;
           }
         }
         break;
@@ -1867,7 +2025,33 @@
         break;
       case "chat":
         if (typeof m.msg === "string" && m.msg.length <= 200) {
-          addChatMessage(role === "host" ? "guest" : "host", m.msg);
+          if (m.msg.indexOf(NICK_PREFIX) === 0) {
+            var nb = m.msg.slice(NICK_PREFIX.length);
+            var bar = nb.indexOf("|");
+            var pid = bar >= 0 ? nb.slice(0, bar) : "";
+            peerId = /^[a-f0-9]{16}$/.test(pid) ? pid : "";
+            peerNick = cleanLobbyName(bar >= 0 ? nb.slice(bar + 1) : nb);
+            if (role === "host" && peerId && isBanned(peerId)) {
+              say(t("mBannedTry", peerNick || "?"));
+              send({ t: "chat", msg: KICK_PREFIX + "b" });
+            }
+            updateTypingUI();
+            return;
+          }
+          if (m.msg.indexOf(KICK_PREFIX) === 0) {
+            onKicked(m.msg.slice(KICK_PREFIX.length) === "b");
+            return;
+          }
+          if (m.msg === TYPING_ON) {
+            peerTypingUntil = Date.now() + TYPING_EXPIRE_MS;
+          } else if (m.msg === TYPING_OFF) {
+            peerTypingUntil = 0;
+          } else {
+            peerTypingUntil = 0;
+            addChatMessage(role === "host" ? "guest" : "host", m.msg);
+            playChatSound();
+          }
+          updateTypingUI();
         }
         break;
     }
@@ -2280,6 +2464,45 @@
     console.info("[ONLINE] geçiş kancası takıldı");
   }
 
+  // Menüden bölüme "go" ile geçince oyunun kendi menü tıklama kodu çalışmadığı için menü müziği kapanmayabiliyor.
+  // Geçişten hemen önce çalan döngülü sesleri kaydedip durdururuz; bölüm bağlanınca (ve 1.5 sn sonra) tekrar kontrol edilir.
+  function collectStrayMusic(g) {
+    strayMusic = [];
+    try {
+      var arr = g.sound && g.sound._sounds;
+      if (!arr) return;
+      var keep = g.level && g.level.sounds && g.level.sounds.levelMusic;
+      var names = [];
+      for (var i = 0; i < arr.length; i++) {
+        var snd = arr[i];
+        if (!snd || !snd.isPlaying || !snd.loop || snd === keep) continue;
+        strayMusic.push({ s: snd, key: snd.key || snd.name });
+        names.push(snd.key || snd.name);
+        try { snd.stop(); } catch (e) {}
+      }
+      log("MÜZİK temizliği (go): " + (names.length ? names.join(", ") : "çalan döngülü ses yok"));
+    } catch (e) {
+      log("MÜZİK temizliği hatası: " + e);
+    }
+  }
+
+  function stopStrayMusic(g, why) {
+    if (!strayMusic.length) return;
+    try {
+      var keep = g && g.level && g.level.sounds && g.level.sounds.levelMusic;
+      var names = [];
+      for (var i = 0; i < strayMusic.length; i++) {
+        var o = strayMusic[i];
+        if (!o.s || !o.s.isPlaying || o.s === keep || (o.s.key || o.s.name) !== o.key) continue;
+        names.push(o.key);
+        try { o.s.stop(); } catch (e) {}
+      }
+      if (names.length) log("MÜZİK temizliği (" + why + "): " + names.join(", "));
+    } catch (e) {
+      log("MÜZİK temizliği hatası: " + e);
+    }
+  }
+
   function applyGo(m) {
     var g = getGame();
     if (!g || !g.state || !g.state.__onlOrigFade) return;
@@ -2335,6 +2558,7 @@
       goWatch = { name: name, at: Date.now(), m: m, retried: !!m._onlRetry, p1: attP1 };
       say(t("mGoIncoming", name));
       log("GO uygulandı: " + name + " " + (params && params.filename ? params.filename : ""));
+      if (name === "level" && g.state.current !== "level") collectStrayMusic(g);
       g.state.__onlOrigFade.call(g.state, name, !!m.w, !!m.c, params);
     } catch (e) {
       console.error("[ONLINE] geçiş uygulama hatası", e);
@@ -2402,6 +2626,10 @@
   }
 
   function onRemoteInput(m) {
+    if (typeof m.q === "number") {
+      if (m.q <= lastInQ) return; // sırasız kanalda gecikmeli eski girdiyi yok say
+      lastInQ = m.q;
+    }
     var now = Date.now();
     ["l", "r", "u"].forEach(function (k) {
       remoteReal[k] = m[k] ? 1 : 0;
@@ -2556,6 +2784,13 @@
     log("ATTACH seviye=" + levelName() + " nesne=" + n + " ateşNid=" + nidOf(lv.pers1) + " suNid=" + nidOf(lv.pers2));
     if (role === "host") applyRemoteInputOnHost();
     say(t("mAttached", n, role === "host" ? t("mAttachedHost") : t("mAttachedGuest")));
+    if (strayMusic.length) {
+      stopStrayMusic(g, "bölüm bağlandı");
+      setTimeout(function () {
+        stopStrayMusic(getGame(), "bölüm bağlandı +1.5sn");
+        strayMusic = [];
+      }, 1500);
+    }
   }
 
   function checkLevel() {
@@ -2646,7 +2881,7 @@
 
   function hostSendSnapshot() {
     if (role !== "host" || !attached || !peerHere || !level) return;
-    if (sock && typeof sock.writableLength === "number" && sock.writableLength > BACKLOG_LIMIT) {
+    if (txBacklog() > BACKLOG_LIMIT) {
       droppedSnaps++;
       var now2 = Date.now();
       if (now2 - dropWinStart >= 1000) {
@@ -2694,7 +2929,7 @@
     snapCount++;
     var all = fullAll;
     fullAll = false;
-    var full = all || snapCount % 40 === 0;
+    var full = all || snapCount % (p2pReady ? 20 : 40) === 0; // güvenilmez kanalda kayıp olabilir: daha sık tam snapshot
     var out = [];
     var p1b = level.pers1 && level.pers1.body && level.pers1.body.data;
     var p2b = level.pers2 && level.pers2.body && level.pers2.body.data;
@@ -3242,10 +3477,10 @@
     var u = c.up.isDown ? 1 : 0;
     var s = l + "," + r + "," + u;
     var now = Date.now();
-    if (s !== lastSent || now - lastSentAt > 250) {
+    if (s !== lastSent || now - lastSentAt > (p2pReady ? 50 : 250)) {
       lastSent = s;
       lastSentAt = now;
-      send({ t: "in", l: l, r: r, u: u });
+      send({ t: "in", q: ++inSeq, l: l, r: r, u: u });
     }
   }
 
@@ -3366,13 +3601,200 @@
 
   var chatListEl = null;
   var chatBarEl = null;
+  var typingEl = null;
+
+  // "yazıyor..." bilgisi, sunucunun tanıdığı mevcut "chat" mesaj türü içinde özel bir metinle gider
+  // (yeni mesaj türü eklemek sunucuda da değişiklik gerektirirdi).
+  var TYPING_ON = "\u200B\u200Bt1";
+  var TYPING_OFF = "\u200B\u200Bt0";
+  var TYPING_REFRESH_MS = 2000; // yazarken en sık bu aralıkla bildir
+  var TYPING_EXPIRE_MS = 4500; // bu süre yeni bildirim gelmezse yazıyor yazısı kalkar
+  var peerTypingUntil = 0;
+  var typingSentAt = 0;
+
+  // Takma adlar da aynı şekilde mevcut "chat" mesajı içinde özel bir önekle gider
+  var NICK_PREFIX = "\u200B\u200Bn:";
+  var KICK_PREFIX = "\u200B\u200Bk:";
+  var chatSoundOn = loadSaved("snd", "1") !== "0";
+  var audioCtx = null;
+
+  // Bildirim sesleri: kısa, sade sinüs tonları (ses dosyası gerekmez)
+  function beep(freqs) {
+    if (!chatSoundOn) return;
+    try {
+      var AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return;
+      if (!audioCtx) audioCtx = new AC();
+      if (audioCtx.state === "suspended") audioCtx.resume();
+      var base = audioCtx.currentTime;
+      for (var i = 0; i < freqs.length; i++) {
+        var st = base + i * 0.11;
+        var osc = audioCtx.createOscillator();
+        var g = audioCtx.createGain();
+        osc.type = "sine";
+        osc.frequency.setValueAtTime(freqs[i], st);
+        g.gain.setValueAtTime(0.0001, st);
+        g.gain.exponentialRampToValueAtTime(0.12, st + 0.01);
+        g.gain.exponentialRampToValueAtTime(0.0001, st + 0.12);
+        osc.connect(g);
+        g.connect(audioCtx.destination);
+        osc.start(st);
+        osc.stop(st + 0.14);
+      }
+    } catch (e) {}
+  }
+  function playChatSound() { beep([880]); }
+  function playJoinSound() { beep([660, 880]); } // oyuncu girdi: yükselen iki ton
+  function playLeaveSound() { beep([660, 440]); } // oyuncu çıktı: alçalan iki ton
+  var peerNick = "";
+  var peerId = ""; // karşı tarafın kurulum kimliği (ban için)
+  var bans = loadBans(); // [{id, name}]
+  var lastPlayerSig = "";
+
+  // Her kurulum için rastgele kalıcı kimlik: host banlarken bunu kullanır
+  function myId() {
+    var id = loadSaved("cid", "");
+    if (!/^[a-f0-9]{16}$/.test(id)) {
+      id = "";
+      try {
+        var a = new Uint8Array(8);
+        window.crypto.getRandomValues(a);
+        id = Array.prototype.map.call(a, function (b) { return ("0" + b.toString(16)).slice(-2); }).join("");
+      } catch (e) {
+        for (var i = 0; i < 16; i++) id += Math.floor(Math.random() * 16).toString(16);
+      }
+      save("cid", id);
+    }
+    return id;
+  }
+
+  function loadBans() {
+    try {
+      var a = JSON.parse(loadSaved("bans", "[]"));
+      if (!Array.isArray(a)) return [];
+      return a.filter(function (b) { return b && /^[a-f0-9]{16}$/.test(b.id); })
+        .map(function (b) { return { id: b.id, name: cleanLobbyName(b.name) || "?" }; })
+        .slice(0, 100);
+    } catch (e) {
+      return [];
+    }
+  }
+
+  function saveBans() {
+    save("bans", JSON.stringify(bans));
+  }
+
+  function isBanned(id) {
+    for (var i = 0; i < bans.length; i++) if (bans[i].id === id) return true;
+    return false;
+  }
+
+  // Host: misafiri at ya da banla (banlıysa aynı kimlikle bir daha giremez)
+  function kickGuest(ban) {
+    if (role !== "host" || !peerHere) return;
+    var banned = false;
+    if (ban) {
+      if (peerId) {
+        if (!isBanned(peerId)) {
+          bans.push({ id: peerId, name: peerNick || t("chatWaterName") });
+          saveBans();
+        }
+        banned = true;
+      } else {
+        say(t("mBanNoId"));
+      }
+    }
+    send({ t: "chat", msg: KICK_PREFIX + (banned ? "b" : "k") });
+    lastPlayerSig = "";
+    updatePlayerSec();
+  }
+
+  function unban(id) {
+    bans = bans.filter(function (b) { return b.id !== id; });
+    saveBans();
+    lastPlayerSig = "";
+    updatePlayerSec();
+  }
+
+  // Misafir: host attı ya da banladı
+  function onKicked(banned) {
+    if (role !== "guest") return;
+    applyGo({ s: "menu", w: 1, c: 0 });
+    disconnect(MANUAL_REASON, true);
+    say(t(banned ? "mBanned" : "mKicked"));
+  }
+
+  // Tab menüsündeki "Oyuncu" bölümü: sadece host'ta (misafir varken at/banla, banlı listesi)
+  function updatePlayerSec() {
+    if (!panelEl) return;
+    var sec = panelEl.querySelector("#onl-plsec");
+    var body = panelEl.querySelector("#onl-plbody");
+    if (!sec || !body) return;
+    var showGuest = role === "host" && connected && peerHere;
+    sec.style.display = showGuest || bans.length ? "" : "none";
+    var sig = LANG + "|" + (showGuest ? "1|" + peerNick + "|" + peerId : "0") + "|" +
+      bans.map(function (b) { return b.id + b.name; }).join(",");
+    if (sig === lastPlayerSig) return;
+    lastPlayerSig = sig;
+    while (body.firstChild) body.removeChild(body.firstChild);
+
+    function row(label, buttons) {
+      var r = document.createElement("div");
+      r.className = "onl-lobby";
+      var info = document.createElement("div");
+      info.className = "onl-lb-i";
+      var nm = document.createElement("span");
+      nm.className = "onl-lb-n";
+      nm.textContent = label;
+      info.appendChild(nm);
+      r.appendChild(info);
+      buttons.forEach(function (b) {
+        var btn = document.createElement("button");
+        btn.className = "onl-btn onl-lb-btn";
+        btn.textContent = b[0];
+        btn.onclick = b[1];
+        r.appendChild(btn);
+      });
+      return r;
+    }
+
+    if (showGuest) {
+      body.appendChild(row(nickFor("guest"), [
+        [t("btnKick"), function () { kickGuest(false); }],
+        [t("btnBan"), function () { kickGuest(true); }]
+      ]));
+    }
+    if (bans.length) {
+      var lb = document.createElement("div");
+      lb.className = "onl-rd";
+      lb.style.margin = "6px 0 4px";
+      lb.textContent = t("lblBanned");
+      body.appendChild(lb);
+      bans.forEach(function (b) {
+        body.appendChild(row(b.name, [[t("btnUnban"), function () { unban(b.id); }]]));
+      });
+    }
+  }
+
+  function myNick() {
+    return currentLobbyName();
+  }
+
+  function nickFor(from) {
+    if (from === role) return myNick();
+    return peerNick || (from === "host" ? t("chatFireName") : t("chatWaterName"));
+  }
+
+  function sendNick() {
+    if (connected && peerHere) send({ t: "chat", msg: NICK_PREFIX + myId() + "|" + myNick() });
+  }
 
   function injectChatStyle() {
     if (document.getElementById("fbc-style")) return;
     var st = document.createElement("style");
     st.id = "fbc-style";
     st.textContent = [
-      ".fbc-wrap{position:fixed;left:10px;bottom:36px;z-index:99997;width:380px;max-width:60vw;",
+      ".fbc-wrap{position:fixed;left:0;bottom:40%;z-index:99997;width:380px;max-width:60vw;",
       "  flex-direction:column;pointer-events:none;color:#fff;",
       "  font:15px/1.35 'Segoe UI','Segoe UI Emoji','Apple Color Emoji','Noto Color Emoji',Arial,sans-serif;",
       "  text-shadow:1px 1px 2px #000;}",
@@ -3380,6 +3802,7 @@
       ".fbc-open .fbc-list{overflow-y:auto;pointer-events:auto;}",
       ".fbc-msg{flex:none;padding:2px 6px;background:rgba(0,0,0,.45);word-break:break-word;}",
       ".fbc-msg.fbc-hide{display:none;}",
+      ".fbc-typing{display:none;flex:none;padding:2px 6px;background:rgba(0,0,0,.45);font-style:italic;color:#ddd;}",
       ".fbc-name{font-weight:bold;}",
       ".fbc-fire .fbc-name{color:#ff9a5c;}",
       ".fbc-water .fbc-name{color:#6cc9ff;}",
@@ -3401,7 +3824,7 @@
     el.className = "fbc-msg " + (m.from === "host" ? "fbc-fire" : "fbc-water");
     var nm = document.createElement("span");
     nm.className = "fbc-name";
-    nm.textContent = (m.from === "host" ? t("chatFireName") : t("chatWaterName")) + ": ";
+    nm.textContent = nickFor(m.from) + ": ";
     var tx = document.createElement("span");
     tx.textContent = m.text;
     el.appendChild(nm);
@@ -3420,7 +3843,39 @@
       m.el.classList.toggle("fbc-hide", hide);
       if (!hide) any = true;
     }
-    if (!chatOpen && !any) chatEl.style.display = "none";
+    if (!chatOpen && !any && Date.now() >= peerTypingUntil) chatEl.style.display = "none";
+  }
+
+  function updateTypingUI() {
+    if (!typingEl || !chatEl) return;
+    if (Date.now() < peerTypingUntil) {
+      typingEl.textContent = t("chatTyping", nickFor(role === "host" ? "guest" : "host"));
+      typingEl.style.display = "block";
+      chatEl.style.display = "flex";
+    } else if (typingEl.style.display !== "none") {
+      typingEl.style.display = "none";
+      renderChat();
+    }
+  }
+
+  // Benim yazdığım: input'ta metin varken (en sık 2 sn'de bir) karşıya bildir, boşalınca/kapanınca kapat
+  function typingNotify() {
+    if (!connected || !peerHere || !chatInputEl) return;
+    if (chatInputEl.value.length > 0) {
+      var now = Date.now();
+      if (now - typingSentAt >= TYPING_REFRESH_MS) {
+        typingSentAt = now;
+        send({ t: "chat", msg: TYPING_ON });
+      }
+    } else {
+      typingStop();
+    }
+  }
+
+  function typingStop() {
+    if (!typingSentAt) return;
+    typingSentAt = 0;
+    if (connected && peerHere) send({ t: "chat", msg: TYPING_OFF });
   }
 
   function scrollChatDown() {
@@ -3451,6 +3906,11 @@
   function clearChat() {
     chatMessages = [];
     chatOpen = false;
+    peerTypingUntil = 0;
+    typingSentAt = 0;
+    peerNick = "";
+    peerId = "";
+    if (typingEl) typingEl.style.display = "none";
     hideSuggest();
     if (chatListEl) while (chatListEl.firstChild) chatListEl.removeChild(chatListEl.firstChild);
     if (chatEl) {
@@ -3471,11 +3931,13 @@
     renderChat();
     scrollChatDown();
     chatInputEl.focus();
+    sendNick();
   }
 
   function closeChat() {
     if (!chatEl) return;
     chatOpen = false;
+    typingStop();
     chatInputEl.value = "";
     hideSuggest();
     chatEl.classList.remove("fbc-open");
@@ -3487,6 +3949,7 @@
     var text = chatInputEl ? safeSlice(convertEmoji(chatInputEl.value.trim()), 200).trim() : "";
     if (!text || !connected || !peerHere) { closeChat(); return; }
     send({ t: "chat", msg: text });
+    typingSentAt = 0; // karşı taraf mesajı alınca "yazıyor"u zaten kaldırır
     addChatMessage(role, text);
     chatInputEl.value = "";
     closeChat();
@@ -3516,7 +3979,11 @@
     chatBarEl.appendChild(sugEl);
     chatBarEl.appendChild(chatInputEl);
 
+    typingEl = document.createElement("div");
+    typingEl.className = "fbc-typing";
+
     chatEl.appendChild(chatListEl);
+    chatEl.appendChild(typingEl);
     chatEl.appendChild(chatBarEl);
     document.body.appendChild(chatEl);
 
@@ -3539,6 +4006,7 @@
         chatInputEl.setSelectionRange(nb.length, nb.length);
       }
       updateSuggest();
+      typingNotify();
     });
 
     ["keydown", "keyup", "keypress"].forEach(function (ev) {
@@ -3558,7 +4026,9 @@
     });
 
     setInterval(function () {
-      if (chatEl && chatEl.style.display !== "none" && !chatOpen) renderChat();
+      if (!chatEl) return;
+      if (typingEl && typingEl.style.display !== "none") updateTypingUI();
+      if (chatEl.style.display !== "none" && !chatOpen) renderChat();
     }, 300);
   }
 
@@ -3654,6 +4124,7 @@
 
   function updatePanelState() {
     if (!panelEl) return;
+    updatePlayerSec();
     var el = panelEl.querySelector("#onl-state");
     if (!el || !el.parentNode) return;
     var cls = "onl-chip";
@@ -3691,19 +4162,25 @@
     lobbyBtn.style.cssText =
       "font:11px sans-serif;color:#eee;background:rgba(30,60,100,.85);border:1px solid rgba(100,160,255,.45);" +
       "border-radius:4px;padding:3px 9px;cursor:pointer;white-space:nowrap;";
-    lobbyBtn.title = t("secLobby") + " (F9)";
+    lobbyBtn.title = t("secLobby");
     lobbyBtn.tabIndex = -1;
     lobbyBtn.onmousedown = function (e) { e.preventDefault(); };
     lobbyBtn.onmouseover = function () { lobbyBtn.style.background = "rgba(50,90,150,.95)"; };
     lobbyBtn.onmouseout = function () { lobbyBtn.style.background = "rgba(30,60,100,.85)"; };
-    lobbyBtn.onclick = function () {
-      if (panelEl) {
-        panelEl.style.display = panelEl.style.display === "none" ? "block" : "none";
-        updatePanelState();
-        lobbyTick();
-      }
-    };
+    lobbyBtn.onclick = toggleLobPanel;
     statusWrap.appendChild(lobbyBtn);
+
+    var menuBtn = document.createElement("button");
+    menuBtn.id = "onl-menu-btn";
+    menuBtn.textContent = "⚙ " + t("menuBtn");
+    menuBtn.style.cssText = lobbyBtn.style.cssText;
+    menuBtn.title = "Tab / F9";
+    menuBtn.tabIndex = -1;
+    menuBtn.onmousedown = function (e) { e.preventDefault(); };
+    menuBtn.onmouseover = function () { menuBtn.style.background = "rgba(50,90,150,.95)"; };
+    menuBtn.onmouseout = function () { menuBtn.style.background = "rgba(30,60,100,.85)"; };
+    menuBtn.onclick = toggleMainPanel;
+    statusWrap.appendChild(menuBtn);
 
     injectMenuStyle();
     panelEl = document.createElement("div");
@@ -3715,23 +4192,33 @@
       if (e.target === panelEl) panelEl.style.display = "none";
     });
 
+    lobPanelEl = document.createElement("div");
+    lobPanelEl.className = "onl-wrap";
+    lobPanelEl.style.display = "none";
+    document.body.appendChild(lobPanelEl);
+    lobPanelEl.addEventListener("mousedown", function (e) {
+      if (e.target === lobPanelEl) {
+        lobPanelEl.style.display = "none";
+        lobbyTick();
+      }
+    });
+
     buildChatUI();
 
     // Global klavye kısayolları (sadece bir kere kurulur)
     window.addEventListener(
       "keydown",
       function (e) {
-        if (e.key === "Escape" && panelEl.style.display !== "none") {
-          panelEl.style.display = "none";
-          e.preventDefault();
-        }
-        if (e.key === "F9" || (e.key === "Tab" && !chatOpen)) {
-          panelEl.style.display = panelEl.style.display === "none" ? "block" : "none";
-          updatePanelState();
+        if (e.key === "Escape" && (panelEl.style.display !== "none" || lobPanelEl.style.display !== "none")) {
+          hidePanels();
           lobbyTick();
           e.preventDefault();
         }
-        if (e.key === "Enter" && connected && peerHere && !chatOpen && panelEl.style.display === "none") {
+        if (e.key === "F9" || (e.key === "Tab" && !chatOpen)) {
+          toggleMainPanel();
+          e.preventDefault();
+        }
+        if (e.key === "Enter" && connected && peerHere && !chatOpen && panelEl.style.display === "none" && lobPanelEl.style.display === "none") {
           openChat();
           e.preventDefault();
         }
@@ -3767,7 +4254,107 @@
     );
 
     populateMenu();
+    populateLobbyPanel();
     updatePanelState();
+  }
+
+  function hidePanels() {
+    if (panelEl) panelEl.style.display = "none";
+    if (lobPanelEl) lobPanelEl.style.display = "none";
+    hideLobPw();
+  }
+
+  // Tab / F9 menüsü (ayarlar + bağlantı); lobi penceresi açıksa onu kapatır
+  function toggleMainPanel() {
+    if (!panelEl) return;
+    if (panelEl.style.display === "none") {
+      if (lobPanelEl) lobPanelEl.style.display = "none";
+      panelEl.style.display = "block";
+    } else {
+      panelEl.style.display = "none";
+    }
+    updatePanelState();
+    lobbyTick();
+  }
+
+  // 🔍 Lobiler düğmesi: lobi tarayıcı kendi penceresinde açılır
+  function toggleLobPanel() {
+    if (!lobPanelEl) return;
+    if (lobPanelEl.style.display !== "none") {
+      lobPanelEl.style.display = "none";
+      hideLobPw();
+      lobbyTick();
+      return;
+    }
+    if (connected || sock) {
+      say(t("lobbyBusy"));
+      return;
+    }
+    if (panelEl) panelEl.style.display = "none";
+    hideLobPw();
+    lobPanelEl.style.display = "block";
+    lobbyTick();
+  }
+
+  // Lobi tarayıcı penceresinin içeriği (dil değişince tekrar kurulur)
+  function populateLobbyPanel() {
+    if (!lobPanelEl) return;
+    while (lobPanelEl.firstChild) lobPanelEl.removeChild(lobPanelEl.firstChild);
+
+    lobPanelEl.innerHTML =
+      "<div class='onl-card'>" +
+        "<div class='onl-title'><b>" + t("secLobby") + "</b>" +
+          "<button class='onl-x' id='onl-lclose'>✕</button></div>" +
+        "<label class='onl-lbl' for='onl-lname2'>" + t("lblLobbyName") + "</label>" +
+        "<input id='onl-lname2' class='onl-in' maxlength='24' spellcheck='false' autocomplete='off' style='margin-bottom:8px'>" +
+        "<div id='onl-pwbox' class='onl-block' style='display:none'>" +
+          "<span class='onl-rt' id='onl-pwname'></span>" +
+          "<span class='onl-rd' style='margin-bottom:4px'>" + t("lobbyPwAsk") + "</span>" +
+          "<input id='onl-lpw' class='onl-in' type='password' maxlength='32' spellcheck='false' autocomplete='off'>" +
+          "<div class='onl-btns'>" +
+            "<button class='onl-btn' id='onl-pwok'>" + t("lobbyJoin") + "</button>" +
+            "<button class='onl-btn' id='onl-pwno'>" + t("btnCancel") + "</button>" +
+          "</div>" +
+        "</div>" +
+        "<div id='onl-lobbies' class='onl-lobbies' style='max-height:300px'></div>" +
+        "<div id='onl-lobdiag' class='onl-rd' style='margin-top:4px'></div>" +
+        "<div id='onl-srvdiag' class='onl-rd'></div>" +
+      "</div>";
+
+    lobPanelEl.querySelector("#onl-lclose").onclick = function () {
+      lobPanelEl.style.display = "none";
+      hideLobPw();
+      lobbyTick();
+    };
+    lobPanelEl.querySelector("#onl-pwok").onclick = confirmLobbyPw;
+    lobPanelEl.querySelector("#onl-pwno").onclick = hideLobPw;
+    lobPanelEl.querySelector("#onl-lpw").addEventListener("keydown", function (e) {
+      if (e.key === "Enter") { confirmLobbyPw(); e.preventDefault(); }
+    });
+
+    lobbyListEl = lobPanelEl.querySelector("#onl-lobbies");
+    lobbyDiagEl = lobPanelEl.querySelector("#onl-lobdiag");
+    srvDiagEl = lobPanelEl.querySelector("#onl-srvdiag");
+    lastLobbySig = "";
+
+    // Takma ad: Tab menüsündeki alanla aynı kayıt
+    var l2 = lobPanelEl.querySelector("#onl-lname2");
+    l2.value = loadSaved("lname", defaultLobbyName());
+    l2.oninput = function () {
+      save("lname", cleanLobbyName(l2.value));
+      var l1 = panelEl && panelEl.querySelector("#onl-lname");
+      if (l1) l1.value = l2.value;
+    };
+    l2.onchange = sendNick;
+
+    [l2, lobPanelEl.querySelector("#onl-lpw")].forEach(function (el) {
+      ["keydown", "keyup", "keypress"].forEach(function (ev) {
+        el.addEventListener(ev, function (e) {
+          e.stopPropagation();
+        });
+      });
+    });
+    lobbyTick();
   }
 
   // Menü içeriğini dile göre kur. Dil değişince tekrar çağrılır.
@@ -3779,12 +4366,9 @@
         "<div class='onl-title'><b>" + t("menuTitle") + "</b><span class='onl-ver'>" + t("menuSub", VERSION) + "</span>" +
           "<button class='onl-x' id='onl-close' title='" + t("closeTitle") + "'>✕</button></div>" +
         "<div class='onl-chip'><span id='onl-state'></span></div>" +
-
-        "<div id='onl-lobsec'>" +
-          "<div class='onl-sec'>" + t("secLobby") + "</div>" +
-          "<div id='onl-lobbies' class='onl-lobbies'></div>" +
-          "<div id='onl-lobdiag' class='onl-rd' style='margin-top:4px'></div>" +
-          "<div id='onl-srvdiag' class='onl-rd'></div>" +
+        "<div id='onl-plsec' style='display:none'>" +
+          "<div class='onl-sec'>" + t("secPlayer") + "</div>" +
+          "<div id='onl-plbody'></div>" +
         "</div>" +
 
         "<div class='onl-sec'>" + t("secConn") + "</div>" +
@@ -3806,19 +4390,12 @@
         "<span class='onl-rd' id='onl-hostip' style='margin-top:6px'></span>" +
 
         "<div class='onl-sec'>" + t("secSet") + "</div>" +
-        "<label class='onl-row'><input type='checkbox' id='onl-alt'><span><span class='onl-rt'>" + t("setAlt") + "</span>" +
-          "<span class='onl-rd'>" + t("setAltDesc") + "</span></span></label>" +
-        "<label class='onl-row'><input type='checkbox' id='onl-comp'><span><span class='onl-rt'>" + t("setComp") + "</span>" +
-          "<span class='onl-rd'>" + t("setCompDesc") + "</span></span></label>" +
         "<label class='onl-row'><input type='checkbox' id='onl-auto'><span><span class='onl-rt'>" + t("setAuto") + "</span>" +
           "<span class='onl-rd'>" + t("setAutoDesc") + "</span></span></label>" +
-        "<div class='onl-block'><span class='onl-rt'>" + t("setSrv") + "</span>" +
-          "<span class='onl-rd'>" + t("setSrvDesc") + "</span>" +
-          "<input id='onl-srv' class='onl-in' placeholder='203.0.113.5:7780' spellcheck='false' autocomplete='off'></div>" +
-        "<div class='onl-block'><div class='onl-slhead'><span class='onl-rt'>" + t("setCap") + "</span>" +
-          "<span class='onl-val' id='onl-capv'></span></div>" +
-          "<span class='onl-rd'>" + t("setCapDesc") + "</span>" +
-          "<input type='range' id='onl-cap' class='onl-range' min='20' max='320' step='10'></div>" +
+        "<label class='onl-row'><input type='checkbox' id='onl-p2p'><span><span class='onl-rt'>" + t("setP2p") + "</span>" +
+          "<span class='onl-rd'>" + t("setP2pDesc") + "</span></span></label>" +
+        "<label class='onl-row'><input type='checkbox' id='onl-snd'><span><span class='onl-rt'>" + t("setSnd") + "</span>" +
+          "<span class='onl-rd'>" + t("setSndDesc") + "</span></span></label>" +
 
         "<div class='onl-langrow'><span>" + t("setLang") + "</span>" +
           "<select id='onl-lang' class='onl-in onl-select'>" +
@@ -3840,28 +4417,17 @@
     // Online sunucu ayarları (v0.9.11)
     var modeBox = panelEl.querySelector("#onl-mode");
     var pwBox = panelEl.querySelector("#onl-pw"); // şifre kaydedilmez, sadece bu oturumda
-    var srvBox = panelEl.querySelector("#onl-srv");
-    srvBox.value = loadSaved("srv", ONLINE_SERVER_DEFAULT);
-    modeBox.value = loadSaved("mode", srvBox.value.trim() ? "online" : "lan") === "lan" ? "lan" : "online";
-    srvDiagEl = panelEl.querySelector("#onl-srvdiag");
-    srvBox.oninput = function () {
-      save("srv", srvBox.value.trim());
-      onlStop(); // adres değişti: yeni adrese yeniden bağlan
-      onlRetryAt = 0;
-      onlErr = "";
-    };
+    modeBox.value = loadSaved("mode", "online") === "lan" ? "lan" : "online";
 
     // Lobi listesi ve lobi adı (v0.9.9)
-    lobbyListEl = panelEl.querySelector("#onl-lobbies");
-    lobbySecEl = panelEl.querySelector("#onl-lobsec");
-    lobbyDiagEl = panelEl.querySelector("#onl-lobdiag");
-    lastLobbySig = "";
     var lname = panelEl.querySelector("#onl-lname");
     lname.value = loadSaved("lname", defaultLobbyName());
     lname.oninput = function () {
       save("lname", cleanLobbyName(lname.value));
+      var l2 = lobPanelEl && lobPanelEl.querySelector("#onl-lname2");
+      if (l2) l2.value = lname.value;
     };
-    lobbyTick();
+    lname.onchange = sendNick; // oyun sırasında ad değişirse karşıya bildir
 
     // Başlat'a basarsan arkadaşının bağlanacağı adres (bu bilgisayarın yerel IP'si + port)
     function showHostIp() {
@@ -3884,23 +4450,6 @@
       modeBox.blur();
     };
 
-    var altBox = panelEl.querySelector("#onl-alt");
-    altBox.checked = altKeysOn;
-    altBox.onchange = function () {
-      altKeysOn = altBox.checked;
-      save("alt", altKeysOn ? "1" : "0");
-      altBox.blur();
-    };
-
-    var compBox = panelEl.querySelector("#onl-comp");
-    compBox.checked = compOn;
-    compBox.onchange = function () {
-      compOn = compBox.checked;
-      save("comp", compOn ? "1" : "0");
-      delayMs = compOn && rtt ? Math.min(80, rtt / 2 + 6) : 0;
-      compBox.blur();
-    };
-
     var autoBox = panelEl.querySelector("#onl-auto");
     autoBox.checked = autoReconnect;
     autoBox.onchange = function () {
@@ -3909,21 +4458,32 @@
       autoBox.blur();
     };
 
-    var capBox = panelEl.querySelector("#onl-cap");
-    var capVal = panelEl.querySelector("#onl-capv");
-    function showCap() {
-      var v = parseInt(capBox.value, 10) || 100;
-      capVal.textContent = v >= 320 ? t("capUnlimited") : v + t("capUnit");
-      capBox.style.setProperty("--p", ((v - 20) / 300) * 100 + "%");
-    }
-    capBox.value = String(capKBs === 0 ? 320 : Math.max(20, Math.min(capKBs || 100, 310)));
-    showCap();
-    capBox.oninput = showCap;
-    capBox.onchange = function () {
-      var v = parseInt(capBox.value, 10) || 100;
-      capKBs = v >= 320 ? 0 : v;
-      save("cap", String(capKBs));
-      capBox.blur();
+    var p2pBox = panelEl.querySelector("#onl-p2p");
+    p2pBox.checked = p2pOn;
+    p2pBox.onchange = function () {
+      p2pOn = p2pBox.checked;
+      save("p2p", p2pOn ? "1" : "0");
+      if (!p2pOn) {
+        var wasUp = p2pReady;
+        p2pCloseConn();
+        if (wasUp) {
+          say(t("mP2pOff"));
+          p2pResync();
+        }
+      } else {
+        p2pRetries = 0;
+        p2pStart();
+      }
+      p2pBox.blur();
+    };
+
+    var sndBox = panelEl.querySelector("#onl-snd");
+    sndBox.checked = chatSoundOn;
+    sndBox.onchange = function () {
+      chatSoundOn = sndBox.checked;
+      save("snd", chatSoundOn ? "1" : "0");
+      if (chatSoundOn) playChatSound(); // açınca bir kez çalar, sesin çalıştığı anlaşılır
+      sndBox.blur();
     };
 
     // ---- Dil seçici ----
@@ -3933,13 +4493,16 @@
       LANG = langBox.value === "en" ? "en" : "tr";
       save("lang", LANG);
       populateMenu();          // menüyü yeni dilde yeniden kur
+      populateLobbyPanel();
       updatePanelState();
       if (chatInputEl) chatInputEl.placeholder = t("chatPlaceholder");
       var lb = document.getElementById("onl-lobby-btn");
-      if (lb) { lb.textContent = "🔍 " + t("secLobby"); lb.title = t("secLobby") + " (F9)"; }
+      if (lb) { lb.textContent = "🔍 " + t("secLobby"); lb.title = t("secLobby"); }
+      var mb = document.getElementById("onl-menu-btn");
+      if (mb) mb.textContent = "⚙ " + t("menuBtn");
     };
 
-    [addr, capBox, lname, srvBox, pwBox].forEach(function (el) {
+    [addr, lname, pwBox].forEach(function (el) {
       ["keydown", "keyup", "keypress"].forEach(function (ev) {
         el.addEventListener(ev, function (e) {
           e.stopPropagation();
@@ -3949,7 +4512,7 @@
 
     function go(r) {
       if (r === "host" && modeBox.value === "online") {
-        var sa = srvBox.value.trim();
+        var sa = currentSrvAddr();
         if (!sa) {
           say(t("mSrvNoAddr")); // menü açık kalsın, kullanıcı adresi girsin
           return;
@@ -4005,8 +4568,223 @@
   }
 
   function sendPing() {
-    if (role === "guest" && peerHere) send({ t: "ping", ts: Date.now() });
+    if (peerHere) send({ t: "ping", ts: Date.now() });
   }
+
+
+  /* ---------------- Doğrudan bağlantı: WebRTC (v0.9.13) ---------------- */
+  // BEGIN-P2P
+  // Host teklif (offer) verir, misafir cevap (answer) verir; sig mesajları sunucudan geçer. Kanal açılınca send() mesajları
+  // türüne göre kanala yönlendirir; kanal yoksa/koparsa TCP aktarımı kullanılır.
+
+  function txBacklog() {
+    if (p2pReady && p2pFastCh) return p2pFastCh.bufferedAmount || 0;
+    return sock && typeof sock.writableLength === "number" ? sock.writableLength : 0;
+  }
+
+  function p2pCloseConn() {
+    p2pId++;
+    if (p2pTimer) { clearTimeout(p2pTimer); p2pTimer = null; }
+    if (p2pRetryTimer) { clearTimeout(p2pRetryTimer); p2pRetryTimer = null; }
+    var c1 = p2pFastCh;
+    var c2 = p2pRelCh;
+    var pc = p2pPc;
+    p2pFastCh = null;
+    p2pRelCh = null;
+    p2pPc = null;
+    p2pReady = false;
+    p2pPending = [];
+    p2pRemoteSet = false;
+    try { if (c1) { c1.onopen = c1.onclose = c1.onmessage = null; c1.close(); } } catch (e) {}
+    try { if (c2) { c2.onopen = c2.onclose = c2.onmessage = null; c2.close(); } } catch (e) {}
+    try { if (pc) { pc.onicecandidate = pc.onconnectionstatechange = pc.ondatachannel = null; pc.close(); } } catch (e) {}
+  }
+
+  function p2pResync() {
+    if (role === "host") {
+      fullAll = true;
+      fullEv = true;
+    } else if (role === "guest" && connected) {
+      send({ t: "rs" });
+    }
+    rtt = 0;
+    peerRtt = 0;
+    if (typeof sendPing === "function") sendPing();
+  }
+
+  function p2pDrop(why) {
+    var was = p2pReady;
+    p2pCloseConn();
+    log("P2P kapandı: " + why + (was ? " (kurulmuştu)" : ""));
+    if (was) {
+      say(t("mP2pOff"));
+      p2pResync();
+    }
+    if (role === "host" && peerHere && connected && p2pOn && onlineMode && p2pRetries < 3) {
+      p2pRetries++;
+      p2pRetryTimer = setTimeout(function () {
+        p2pRetryTimer = null;
+        p2pStart();
+      }, 4000);
+    }
+  }
+
+  function p2pWatch() {
+    if (p2pReady && Date.now() - p2pLastRecv > 3000) p2pDrop("sessizlik");
+  }
+
+  function p2pCheckUp() {
+    if (p2pReady || !p2pFastCh || !p2pRelCh) return;
+    if (p2pFastCh.readyState !== "open" || p2pRelCh.readyState !== "open") return;
+    if (p2pTimer) { clearTimeout(p2pTimer); p2pTimer = null; }
+    p2pReady = true;
+    p2pLastRecv = Date.now();
+    p2pRetries = 0;
+    log("P2P kuruldu");
+    say(t("mP2pOn"));
+    p2pResync();
+  }
+
+  function p2pRecv(ev) {
+    p2pLastRecv = Date.now();
+    var d = ev && ev.data;
+    if (typeof d !== "string" || d.length > 300000) return;
+    var m;
+    try {
+      m = JSON.parse(d);
+    } catch (e) {
+      return;
+    }
+    if (!m || typeof m.t !== "string" || !(P2P_FAST[m.t] || P2P_REL[m.t])) return;
+    try {
+      onMessage(m);
+    } catch (e) {
+      console.error("[ONLINE] P2P mesaj hatası", e);
+      log("P2P MESAJ HATASI: " + (e && e.stack ? e.stack : e));
+    }
+  }
+
+  function p2pBind(ch, id) {
+    ch.onopen = function () { if (id === p2pId) p2pCheckUp(); };
+    ch.onclose = function () { if (id === p2pId) p2pDrop("kanal kapandı"); };
+    ch.onmessage = function (ev) { if (id === p2pId) p2pRecv(ev); };
+  }
+
+  function p2pMake() {
+    var id = ++p2pId;
+    var pc = new RTCPeerConnection({ iceServers: P2P_ICE });
+    p2pPc = pc;
+    pc.onicecandidate = function (e) {
+      if (id !== p2pId || !e.candidate) return;
+      var c = e.candidate;
+      send({ t: "sig", k: "ice", d: { candidate: c.candidate, sdpMid: c.sdpMid, sdpMLineIndex: c.sdpMLineIndex } });
+    };
+    pc.onconnectionstatechange = function () {
+      if (id !== p2pId) return;
+      var st = pc.connectionState;
+      if (st === "failed" || st === "closed") p2pDrop("bağlantı " + st);
+    };
+    p2pTimer = setTimeout(function () {
+      p2pTimer = null;
+      if (id === p2pId && !p2pReady) p2pDrop("zaman aşımı");
+    }, 10000);
+    return pc;
+  }
+
+  function p2pFlushIce(pc) {
+    var list = p2pPending;
+    p2pPending = [];
+    for (var i = 0; i < list.length; i++) pc.addIceCandidate(list[i]).catch(function () {});
+  }
+
+  function p2pErr(id, what) {
+    return function (e) {
+      if (id === p2pId) p2pDrop(what + ": " + (e && e.message ? e.message : e));
+    };
+  }
+
+  function p2pStart() {
+    if (role !== "host" || !p2pOn || !onlineMode || !peerHere || !connected || p2pPc) return;
+    if (typeof RTCPeerConnection !== "function") {
+      log("P2P: RTCPeerConnection yok");
+      return;
+    }
+    try {
+      var pc = p2pMake();
+      var id = p2pId;
+      p2pFastCh = pc.createDataChannel("f", { ordered: false, maxRetransmits: 0 });
+      p2pRelCh = pc.createDataChannel("r", { ordered: true });
+      p2pBind(p2pFastCh, id);
+      p2pBind(p2pRelCh, id);
+      pc.createOffer()
+        .then(function (o) {
+          if (id !== p2pId) return null;
+          return pc.setLocalDescription(o).then(function () {
+            if (id === p2pId) send({ t: "sig", k: "offer", d: { type: o.type, sdp: o.sdp } });
+          });
+        })
+        .catch(p2pErr(id, "offer hatası"));
+    } catch (e) {
+      log("P2P başlatılamadı: " + (e && e.message ? e.message : e));
+      p2pCloseConn();
+    }
+  }
+
+  function p2pSignal(m) {
+    if (!p2pOn || !onlineMode || !peerHere || !connected) return;
+    if (typeof m.k !== "string" || !m.d || typeof m.d !== "object") return;
+    try {
+      if (m.k === "offer" && role === "guest") {
+        if (typeof m.d.sdp !== "string" || m.d.sdp.length > 20000) return;
+        if (typeof RTCPeerConnection !== "function") return;
+        p2pCloseConn();
+        var pc = p2pMake();
+        var id = p2pId;
+        pc.ondatachannel = function (e) {
+          if (id !== p2pId) return;
+          var ch = e.channel;
+          if (ch.label === "f") p2pFastCh = ch;
+          else if (ch.label === "r") p2pRelCh = ch;
+          else return;
+          p2pBind(ch, id);
+          if (ch.readyState === "open") p2pCheckUp();
+        };
+        pc.setRemoteDescription({ type: "offer", sdp: m.d.sdp })
+          .then(function () {
+            if (id !== p2pId) return null;
+            p2pRemoteSet = true;
+            p2pFlushIce(pc);
+            return pc.createAnswer();
+          })
+          .then(function (a) {
+            if (!a || id !== p2pId) return null;
+            return pc.setLocalDescription(a).then(function () {
+              if (id === p2pId) send({ t: "sig", k: "answer", d: { type: a.type, sdp: a.sdp } });
+            });
+          })
+          .catch(p2pErr(id, "answer hatası"));
+      } else if (m.k === "answer" && role === "host" && p2pPc && !p2pRemoteSet) {
+        if (typeof m.d.sdp !== "string" || m.d.sdp.length > 20000) return;
+        var pcA = p2pPc;
+        var idA = p2pId;
+        pcA.setRemoteDescription({ type: "answer", sdp: m.d.sdp })
+          .then(function () {
+            if (idA !== p2pId) return;
+            p2pRemoteSet = true;
+            p2pFlushIce(pcA);
+          })
+          .catch(p2pErr(idA, "answer uygulanamadı"));
+      } else if (m.k === "ice" && p2pPc) {
+        if (typeof m.d.candidate !== "string" || m.d.candidate.length > 1000) return;
+        var cand = { candidate: m.d.candidate, sdpMid: m.d.sdpMid, sdpMLineIndex: m.d.sdpMLineIndex };
+        if (p2pRemoteSet) p2pPc.addIceCandidate(cand).catch(function () {});
+        else p2pPending.push(cand);
+      }
+    } catch (e) {
+      log("P2P sinyal hatası: " + (e && e.message ? e.message : e));
+    }
+  }
+  // END-P2P
 
   /* ---------------- Başlat ---------------- */
 
@@ -4017,6 +4795,7 @@
     setInterval(watchdog, 500);
     setInterval(sendPing, 1000);
     setInterval(heartbeat, 2000);
+    setInterval(p2pWatch, 500);
     setInterval(refreshExtra, 500);
     setInterval(lobbyTick, 500);
     console.info("[ONLINE] mod " + VERSION + " yüklendi");
